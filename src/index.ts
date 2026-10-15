@@ -5,8 +5,9 @@
  * MCP over stdio.
  *
  * stdout is the protocol channel. Nothing else may be written to it, so every log line goes to stderr.
- * The agent key is read on the first tool call, not at startup: a missing or unreadable key then comes back
- * as a tool result the agent can relay, instead of a dead process the host can only call "disconnected".
+ * Whether the key file exists decides which tools are offered (src/tools.ts). The key itself is read on the first
+ * tool call, not at startup: a missing or unreadable key then comes back as a tool result the agent can relay,
+ * instead of a dead process the host can only call "disconnected".
  */
 import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -20,10 +21,12 @@ const { version } = createRequire(import.meta.url)("../package.json") as { versi
 async function main(): Promise<void> {
   const config = loadConfig();
   const server = new McpServer({ name: "achromat-mcp-server", version });
-  registerTools(server, new MomClient(config, { userAgent: `achromat-mcp-server/${version}` }));
+  const userAgent = `achromat-mcp-server/${version}`;
+  const tools = registerTools(server, new MomClient(config, { userAgent }), { config, registrationDeps: { userAgent } });
 
   await server.connect(new StdioServerTransport());
   console.error(`achromat-mcp-server ${version} ready on stdio (service: ${config.baseUrl}, key: ${config.keyFile})`);
+  console.error(`achromat-mcp-server: ${tools.active().includes("achromat_register_identity") ? "no key file yet, so only achromat_register_identity is offered" : "key file found, offering achromat_recall and achromat_calibrate"}`);
 }
 
 main().catch((error: unknown) => {

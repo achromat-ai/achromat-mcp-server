@@ -1,17 +1,26 @@
 /**
- * The two tools this server exposes to a host agent, and their input schemas.
+ * The tools this server exposes to a host agent, and their input schemas.
  *
- *   achromat_recall     Turn 0: is there a verified compliant version of this call?   POST /api/v1/recall
- *   achromat_calibrate  Turn 1 / Turn 2: check the call against live policy.          POST /api/v1/calibrate
+ *   achromat_register_identity  Create and register this machine's key (only while there is no key file).
+ *   achromat_recall             Turn 0: is there a verified compliant version of this call?   POST /api/v1/recall
+ *   achromat_calibrate          Turn 1 / Turn 2: check the call against live policy.          POST /api/v1/calibrate
+ *
+ * Which tools the host sees depends on one fact: whether the key file exists. Without it only
+ * achromat_register_identity is listed (recall and calibrate could not sign anything). With it, only recall and
+ * calibrate are listed. The switch happens at startup and again right after a registration, and the SDK tells
+ * the host when the list changes.
  *
  * Field names follow the host-facing convention (`tool_name`); the service's own field is `tool`, and
  * `toRequestBody` is the one place that maps between them. Both tools require `arguments`, as the service does.
  */
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { existsSync } from "node:fs";
+import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { MomClient } from "./client.js";
-import { formatCalibrate, formatRecall } from "./format.js";
+import type { Config } from "./config.js";
+import { formatCalibrate, formatRecall, formatRegistration } from "./format.js";
+import { registerIdentity, type RegistrationDeps, type RegistrationOutcome } from "./registration.js";
 
 export const DOMAINS = ["fintech", "industrial_iot", "robotics", "devsecops"] as const;
 
@@ -88,8 +97,33 @@ export async function calibrate(client: MomClient, input: CalibrateArgs): Promis
   return formatCalibrate(await client.post("/api/v1/calibrate", toRequestBody(input)));
 }
 
-export function registerTools(server: McpServer, client: MomClient): void {
-  server.registerTool(
+export const registerInput = {
+  user_confirmed: z
+    .literal(true)
+    .describe("Set to true ONLY after the user has said yes to creating an identity. If they have not been asked, ask first and do not call this tool."),
+};
+
+export interface ToolDeps {
+  config: Config;
+  /** Whether a key file is in place. Defaults to checking the configured path. */
+  keyExists?: () => boolean;
+  /** Creates and registers an identity. Defaults to the real one. */
+  register?: (config: Config, deps: RegistrationDeps) => Promise<RegistrationOutcome>;
+  registrationDeps?: RegistrationDeps;
+}
+
+export interface ToolController {
+  /** Re-reads whether the key file exists and switches the tool set to match. Safe to call at any time. */
+  refresh(): void;
+  /** The tools the host should currently see, by name. */
+  active(): string[];
+}
+
+export function registerTools(server: McpServer, client: MomClient, deps: ToolDeps): ToolController {
+  const keyExists = deps.keyExists ?? (() => existsSync(deps.config.keyFile));
+  const register = deps.register ?? registerIdentity;
+
+  const recallTool: RegisteredTool = server.registerTool(
     "achromat_recall",
     {
       title: "Recall a verified compliant tool call",
@@ -101,7 +135,7 @@ export function registerTools(server: McpServer, client: MomClient): void {
     (input) => recall(client, input),
   );
 
-  server.registerTool(
+  const calibrateTool: RegisteredTool = server.registerTool(
     "achromat_calibrate",
     {
       title: "Check a tool call against live policy",
@@ -112,4 +146,45 @@ export function registerTools(server: McpServer, client: MomClient): void {
     },
     (input) => calibrate(client, input),
   );
+
+  // One registration at a time: a second call while one is running gets the same answer, not a second identity.
+  let inFlight: Promise<RegistrationOutcome> | null = null;
+
+  const registerTool: RegisteredTool = server.registerTool(
+    "achromat_register_identity",
+    {
+      title: "Create and register an Achromat identity",
+      description:
+        "Achromat needs a private key on this machine before it can answer anything, and none exists yet. This tool creates one: it generates an Ed25519 key pair, completes a short proof of work (about a second), registers the public key with Achromat MOM, and saves the private key to a file that only this user can read. ASK THE USER FIRST and wait for a yes, because it writes a private key file on their machine and creates an identity on the service. Explain that the key never leaves the machine, that only the public half is sent, and that the file cannot be recovered if lost. Then call this tool with user_confirmed set to true. Afterwards achromat_recall and achromat_calibrate become available.",
+      inputSchema: registerInput,
+      annotations: { title: "Create and register an Achromat identity", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async (_input, extra) => {
+      inFlight ??= register(deps.config, { ...deps.registrationDeps, signal: extra.signal }).finally(() => {
+        inFlight = null;
+      });
+      const outcome = await inFlight;
+      controller.refresh(); // a new key file (or one found in place) changes which tools make sense
+      return formatRegistration(outcome);
+    },
+  );
+
+  const controller: ToolController = {
+    refresh() {
+      const haveKey = keyExists();
+      for (const tool of [recallTool, calibrateTool]) {
+        if (tool.enabled !== haveKey) (haveKey ? tool.enable() : tool.disable());
+      }
+      if (registerTool.enabled === haveKey) (haveKey ? registerTool.disable() : registerTool.enable());
+    },
+    active() {
+      return [
+        ...(registerTool.enabled ? ["achromat_register_identity"] : []),
+        ...(recallTool.enabled ? ["achromat_recall"] : []),
+        ...(calibrateTool.enabled ? ["achromat_calibrate"] : []),
+      ];
+    },
+  };
+  controller.refresh();
+  return controller;
 }

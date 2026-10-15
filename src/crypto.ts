@@ -53,13 +53,13 @@ export function parseAgentKey(pem: string): AgentKey {
   // Detected from the text, not from the error Node raises: the error code for a missing passphrase differs
   // between Node and OpenSSL versions. Covers PKCS#8 ("ENCRYPTED PRIVATE KEY") and the legacy "Proc-Type" form.
   if (/-----BEGIN ENCRYPTED PRIVATE KEY-----/.test(pem) || /^Proc-Type:\s*4,ENCRYPTED/m.test(pem)) {
-    throw new KeyFileError("ENCRYPTED", "The key file is passphrase-protected. Use an unencrypted PKCS#8 Ed25519 key (skill.md, section 2.4 creates one).");
+    throw new KeyFileError("ENCRYPTED", "The key file is passphrase-protected. Use an unencrypted PKCS#8 Ed25519 key (delete this file and use the achromat_register_identity tool to create a new one).");
   }
   let privateKey: KeyObject;
   try {
     privateKey = createPrivateKey({ key: pem, format: "pem" });
   } catch {
-    throw new KeyFileError("INVALID", "The key file is not a readable PEM private key. Expected an unencrypted PKCS#8 Ed25519 key (skill.md, section 2.4 creates one).");
+    throw new KeyFileError("INVALID", "The key file is not a readable PEM private key. Expected an unencrypted PKCS#8 Ed25519 key (delete this file and use the achromat_register_identity tool to create a new one).");
   }
   if (privateKey.asymmetricKeyType !== "ed25519") {
     throw new KeyFileError("WRONG_TYPE", `The key file holds a ${privateKey.asymmetricKeyType ?? "non-asymmetric"} key. Achromat requires an Ed25519 key.`);
@@ -91,7 +91,7 @@ export function loadAgentKey(path: string, platform: NodeJS.Platform = process.p
     if (code === "ENOENT") {
       throw new KeyFileError(
         "NOT_FOUND",
-        `No agent key found at ${path}. Create and register one (README, "Create and register a key"), or point ACHROMAT_AGENT_KEY_FILE at your key.`,
+        `No agent key found at ${path}. Ask the user whether to create one with the achromat_register_identity tool (if it is not listed, restart the host), or point ACHROMAT_AGENT_KEY_FILE at an existing key.`,
       );
     }
     throw new KeyFileError("UNREADABLE", `The key file at ${path} could not be read (${code ?? "unknown error"}). Check that this user may read it.`);

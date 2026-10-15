@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "MCP server that lets an agent recall and calibrate tool calls against Achromat MOM (mom.achromat.ai), from any MCP host.",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/achromat-ai/achromat-mcp-server.git"

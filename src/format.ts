@@ -6,6 +6,7 @@
  */
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { errorCode, type ApiResult } from "./client.js";
+import type { RegistrationOutcome } from "./registration.js";
 
 type Json = Record<string, unknown>;
 
@@ -84,7 +85,7 @@ export function describeFailure(outcome: ApiResult, endpoint: string, limits: st
       case "AGENT_KEY_UNKNOWN":
         return result(true, [
           "The service does not know this key (HTTP 401, AGENT_KEY_UNKNOWN).",
-          "The key has to be registered once before it can sign requests (README, \"Create and register a key\"). Tell the user.",
+          "A key file exists, but this key was never registered (or was removed). Tell the user. To create a new identity they must move or delete the key file and restart the host; the achromat_register_identity tool then becomes available.",
         ]);
       case "AGENT_SIGNATURE_EXPIRED": {
         const offset = outcome.clockOffsetMs === null ? "" : ` This machine's clock differs from the service's by about ${Math.round(Math.abs(outcome.clockOffsetMs) / 1000)} seconds.`;
@@ -101,7 +102,7 @@ export function describeFailure(outcome: ApiResult, endpoint: string, limits: st
   }
   if (status === 403) {
     if (code === "AGENT_KEY_INACTIVE") {
-      return result(true, ["This key has been revoked or rotated (HTTP 403, AGENT_KEY_INACTIVE).", "Register a new key and point ACHROMAT_AGENT_KEY_FILE at it. Tell the user."]);
+      return result(true, ["This key has been revoked or rotated (HTTP 403, AGENT_KEY_INACTIVE).", "Tell the user. To create a new identity they must move or delete the key file and restart the host; the achromat_register_identity tool then becomes available."]);
     }
     return result(true, [`This key is not allowed to use ${endpoint} (HTTP 403${code ? `, ${code}` : ""}).`, ...(message ? [message] : [])]);
   }
@@ -215,4 +216,41 @@ export function formatCalibrate(outcome: ApiResult): CallToolResult {
   }
   lines.push("If the directive asks for evidence you do not have (an approver, a signature, a verified state), stop and ask the user. Do not invent it.");
   return result(false, lines);
+}
+
+// ───────────────────────────── registration ─────────────────────────────
+
+export function formatRegistration(outcome: RegistrationOutcome): CallToolResult {
+  if (!outcome.ok) {
+    const lines = [outcome.message];
+    switch (outcome.code) {
+      case "KEY_EXISTS":
+        break;
+      case "COMMIT_FAILED":
+        lines.push("Tell the user exactly where the key is saved.");
+        break;
+      case "NETWORK":
+      case "TIMEOUT":
+      case "UNAVAILABLE":
+      case "RATE_LIMITED":
+        lines.push("It is safe to try again later; nothing was created.");
+        break;
+      case "CANCELLED":
+        break;
+      default:
+        lines.push("Tell the user. Do not try to work around this.");
+    }
+    return result(true, lines);
+  }
+  const seconds = (outcome.pow.elapsedMs / 1000).toFixed(1);
+  return result(false, [
+    "REGISTERED. A new identity was created and its key was saved on this machine.",
+    `Key file: ${outcome.keyFile}`,
+    "That file is the identity. It is private to this user (mode 600): it must never be shared, committed to git or pasted anywhere, and it cannot be recovered if lost, so the user should back it up.",
+    `Public key: ${outcome.publicKey}`,
+    ...(outcome.role ? [`Role: ${outcome.role}`] : []),
+    `Proof of work: ${outcome.pow.attempts.toLocaleString("en-US")} attempts in ${seconds} s.`,
+    "",
+    "achromat_recall and achromat_calibrate are available now. Use achromat_recall before you run a tool that policy might block. If your host does not show the new tools, ask the user to restart it.",
+  ]);
 }

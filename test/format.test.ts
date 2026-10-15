@@ -140,10 +140,12 @@ describe("failures, as the agent sees them", () => {
     expect(text).toContain("a short while");
   });
 
-  it("401 unknown key: points at registration", () => {
+  it("401 unknown key: says the key file is not registered and how to start over", () => {
     const text = textOf(run(failure(401, "AGENT_KEY_UNKNOWN")));
     expect(text).toContain("does not know this key");
-    expect(text).toContain("registered once");
+    expect(text).toContain("never registered");
+    expect(text).toContain("move or delete the key file");
+    expect(text).toContain("achromat_register_identity");
   });
 
   it("401 expired: reports the clock difference", () => {
@@ -167,10 +169,11 @@ describe("failures, as the agent sees them", () => {
     expect(textOf(run(failure(401, "SOMETHING_NEW", "details here")))).toMatch(/HTTP 401, SOMETHING_NEW[\s\S]*details here/);
   });
 
-  it("403 inactive key: says to register a new one", () => {
+  it("403 inactive key: says how to get a new identity", () => {
     const text = textOf(run(failure(403, "AGENT_KEY_INACTIVE")));
     expect(text).toContain("revoked or rotated");
-    expect(text).toContain("Register a new key");
+    expect(text).toContain("move or delete the key file");
+    expect(text).toContain("achromat_register_identity");
   });
 
   it("403 for another reason: names the endpoint", () => {

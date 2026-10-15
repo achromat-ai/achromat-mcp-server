@@ -13,7 +13,8 @@ async function connect(options: FakeServiceOptions = {}, loadKey?: () => ReturnT
   const key = freshKey();
   const momClient = new MomClient({ baseUrl: BASE_URL, keyFile: "/k.pem" }, { fetch: service.fetch, loadKey: loadKey ?? (() => loaded(key)) });
   const server = new McpServer({ name: "test", version: "0.0.0" });
-  registerTools(server, momClient);
+  // These tests are about recall and calibrate, so a key is "in place" and those two tools are offered.
+  registerTools(server, momClient, { config: { baseUrl: BASE_URL, keyFile: "/k.pem" }, keyExists: () => true });
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "host", version: "0.0.0" });
   await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
@@ -24,7 +25,7 @@ const TASK = "Remit settlement funds to an overseas supplier for the outstanding
 const text = (result: unknown) => ((result as { content: Array<{ text: string }> }).content ?? []).map((part) => part.text).join("\n");
 
 describe("the tools a host sees", () => {
-  it("lists exactly achromat_recall and achromat_calibrate", async () => {
+  it("lists exactly achromat_recall and achromat_calibrate once a key is in place", async () => {
     const { client } = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual(["achromat_calibrate", "achromat_recall"]);
