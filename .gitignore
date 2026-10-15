@@ -1,0 +1,15 @@
+# Dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Keys and local configuration: this server will read an agent key from disk, and none of it belongs in git
+*.pem
+*.key
+.env
+.env.*
+
+# Editor and OS noise
+.DS_Store
+.vscode/
+.idea/
