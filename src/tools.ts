@@ -5,16 +5,13 @@
  *   achromat_calibrate  Turn 1 / Turn 2: check the call against live policy.          POST /api/v1/calibrate
  *
  * Field names follow the host-facing convention (`tool_name`); the service's own field is `tool`, and
- * `toRequestBody` is the one place that maps between them.
- *
- * SCAFFOLD: the handlers validate input and say what they would send, but they do not send it. The signed
- * client (an Ed25519 key, the 7-part request string, a fresh nonce per call) is not written yet, so every
- * call returns an `isError` result with code NOT_IMPLEMENTED. Nothing here pretends to have succeeded.
+ * `toRequestBody` is the one place that maps between them. Both tools require `arguments`, as the service does.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import type { Config } from "./config.js";
+import type { MomClient } from "./client.js";
+import { formatCalibrate, formatRecall } from "./format.js";
 
 export const DOMAINS = ["fintech", "industrial_iot", "robotics", "devsecops"] as const;
 
@@ -37,17 +34,18 @@ const TASK_DESCRIPTION = z
 
 const DOMAIN = z.enum(DOMAINS).describe("The area the tool call belongs to.");
 
-const ARGUMENTS = z
-  .record(z.string(), z.unknown())
-  .describe("The arguments of the tool call, as a JSON object. Never put secrets or credentials in it.");
+const nonEmpty = (value: Record<string, unknown>) => Object.keys(value).length > 0;
 
 export const recallInput = {
   domain: DOMAIN,
   tool_name: TOOL_NAME,
   task_description: TASK_DESCRIPTION,
-  arguments: ARGUMENTS.optional().describe(
-    "The arguments you intend to send to the tool. Optional here, but pass them: the service matches on the names of their keys (never the values), and it requires an arguments object on every recall.",
-  ),
+  arguments: z
+    .record(z.string(), z.unknown())
+    .refine(nonEmpty, "arguments must not be empty")
+    .describe(
+      "REQUIRED. The arguments you intend to send to the tool, as a non-empty JSON object, using the key names the tool really uses. Only the names of the keys (and their nesting) are used for semantic matching, never the values, so the real key names make a recall find the right lesson; an invented or generic shape finds the wrong one or none. Never put secrets or credentials in it.",
+    ),
 };
 
 export const calibrateInput = {
@@ -56,9 +54,10 @@ export const calibrateInput = {
   task_description: TASK_DESCRIPTION.describe(
     "What you are trying to do. Use exactly the same wording on the first attempt and on the retry: it is what pairs a blocked call with its fix.",
   ),
-  arguments: ARGUMENTS.refine((value) => Object.keys(value).length > 0, "arguments must not be empty").describe(
-    "The arguments of the tool call you want checked. A non-empty JSON object. Never put secrets or credentials in it.",
-  ),
+  arguments: z
+    .record(z.string(), z.unknown())
+    .refine(nonEmpty, "arguments must not be empty")
+    .describe("The arguments of the tool call you want checked. A non-empty JSON object. Never put secrets or credentials in it."),
   trap_id: z
     .string()
     .uuid()
@@ -69,32 +68,37 @@ export const calibrateInput = {
 type RecallArgs = z.infer<z.ZodObject<typeof recallInput>>;
 type CalibrateArgs = z.infer<z.ZodObject<typeof calibrateInput>>;
 
-/** The request the service expects: `tool_name` becomes `tool`, and absent optional fields are left out. */
+/** The request the service expects: `tool_name` becomes `tool`, and an absent trap_id is left out. */
 export function toRequestBody(input: RecallArgs | CalibrateArgs): Record<string, unknown> {
-  const { tool_name, ...rest } = input;
-  return Object.fromEntries(Object.entries({ domain: rest.domain, tool: tool_name, task_description: rest.task_description, arguments: rest.arguments, trap_id: "trap_id" in rest ? rest.trap_id : undefined }).filter(([, value]) => value !== undefined));
-}
-
-function notImplemented(path: string, input: RecallArgs | CalibrateArgs, config: Config): CallToolResult {
-  const body = {
-    error: "NOT_IMPLEMENTED",
-    message: "This build of the Achromat MCP server validates the call but cannot send it yet: request signing is not implemented. Nothing was sent to the service and no verdict was produced.",
-    wouldSend: { method: "POST", url: `${config.baseUrl}${path}`, body: toRequestBody(input) },
+  const body: Record<string, unknown> = {
+    domain: input.domain,
+    tool: input.tool_name,
+    task_description: input.task_description,
+    arguments: input.arguments,
   };
-  return { isError: true, content: [{ type: "text", text: JSON.stringify(body, null, 2) }] };
+  if ("trap_id" in input && input.trap_id !== undefined) body.trap_id = input.trap_id;
+  return body;
 }
 
-export function registerTools(server: McpServer, config: Config): void {
+export async function recall(client: MomClient, input: RecallArgs): Promise<CallToolResult> {
+  return formatRecall(await client.post("/api/v1/recall", toRequestBody(input)));
+}
+
+export async function calibrate(client: MomClient, input: CalibrateArgs): Promise<CallToolResult> {
+  return formatCalibrate(await client.post("/api/v1/calibrate", toRequestBody(input)));
+}
+
+export function registerTools(server: McpServer, client: MomClient): void {
   server.registerTool(
     "achromat_recall",
     {
       title: "Recall a verified compliant tool call",
       description:
-        "Call this BEFORE you run a tool that policy might block (payments, credit decisions, robot or plant commands, shell, SQL, web requests). It asks Achromat MOM whether a verified compliant version of this call already exists. On a match you receive compliant_arguments, a steering_directive and the rule that applied: use the whole compliant_arguments object as your template, keep any [VERIFIED_STATE] placeholders exactly as written, and change only your own operational values (amounts, routing numbers, file paths). On no match, continue with achromat_calibrate.",
+        "Call this BEFORE you run a tool that policy might block (payments, credit decisions, robot or plant commands, shell, SQL, web requests). It asks Achromat MOM whether a verified compliant version of this call already exists. Pass the arguments you intend to send: the names of their keys (not the values) are what the semantic match uses. On a match you receive compliant_arguments, a steering_directive and the rule that applied: use the whole compliant_arguments object as your template, keep any [VERIFIED_STATE] placeholders exactly as written, and change only your own operational values (amounts, routing numbers, file paths). On no match, continue with achromat_calibrate.",
       inputSchema: recallInput,
       annotations: { title: "Recall a verified compliant tool call", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
-    (input) => notImplemented("/api/v1/recall", input, config),
+    (input) => recall(client, input),
   );
 
   server.registerTool(
@@ -106,6 +110,6 @@ export function registerTools(server: McpServer, config: Config): void {
       inputSchema: calibrateInput,
       annotations: { title: "Check a tool call against live policy", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    (input) => notImplemented("/api/v1/calibrate", input, config),
+    (input) => calibrate(client, input),
   );
 }

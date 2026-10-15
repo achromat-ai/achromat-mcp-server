@@ -1,18 +1,31 @@
 /**
- * Configuration, read from the environment. Nothing here reads a key: the signing client is not built yet.
+ * Configuration, read from the environment. Reading a path here never reads the file: the key is loaded
+ * lazily, on the first tool call (see client.ts).
  */
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 
 /** The service this proxy talks to. */
 export const DEFAULT_BASE_URL = "https://mom.achromat.ai";
 
+/** Where the agent's Ed25519 private key is expected when ACHROMAT_AGENT_KEY_FILE is not set. */
+export const DEFAULT_KEY_FILE = "~/.achromat/achromat_agent_key.pem";
+
 export interface Config {
   /** Origin of the Achromat MOM service, without a trailing slash. */
   baseUrl: string;
-  /** Path to the agent's Ed25519 private key (PEM). Unused until request signing is implemented. */
-  keyFile: string | null;
+  /** Absolute path to the agent's Ed25519 private key (PEM). */
+  keyFile: string;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+/** Expands a leading `~` to the home directory. MCP hosts pass environment values through literally. */
+export function expandHome(path: string, home: string = homedir()): string {
+  if (path === "~") return home;
+  if (path.startsWith("~/") || path.startsWith("~\\")) return resolve(home, path.slice(2));
+  return path;
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): Config {
   const raw = env.ACHROMAT_BASE_URL?.trim() || DEFAULT_BASE_URL;
   let url: URL;
   try {
@@ -23,5 +36,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))) {
     throw new Error("ACHROMAT_BASE_URL must be an https URL (http is allowed only for localhost).");
   }
-  return { baseUrl: url.origin, keyFile: env.ACHROMAT_KEY_FILE?.trim() || null };
+  const keyFile = resolve(expandHome(env.ACHROMAT_AGENT_KEY_FILE?.trim() || DEFAULT_KEY_FILE, home));
+  return { baseUrl: url.origin, keyFile };
 }

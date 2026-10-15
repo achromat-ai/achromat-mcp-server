@@ -8,6 +8,10 @@
     "type": "git",
     "url": "git+https://github.com/achromat-ai/achromat-mcp-server.git"
   },
+  "homepage": "https://github.com/achromat-ai/achromat-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/achromat-ai/achromat-mcp-server/issues"
+  },
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -17,7 +21,7 @@
     "compliance"
   ],
   "bin": {
-    "achromat-mcp-server": "dist/index.js"
+    "achromat-mcp": "./dist/index.js"
   },
   "files": [
     "dist",
@@ -26,12 +30,16 @@
   "engines": {
     "node": ">=20"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "build": "tsc && node -e \"require('node:fs').chmodSync('dist/index.js', 0o755)\"",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "start": "node dist/index.js",
     "inspect": "npm run build && npx @modelcontextprotocol/inspector node dist/index.js",
-    "prepublishOnly": "npm run typecheck && npm run build"
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
+    "test": "vitest run"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
@@ -39,6 +47,7 @@
   },
   "devDependencies": {
     "@types/node": "22.20.5",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
   }
 }
