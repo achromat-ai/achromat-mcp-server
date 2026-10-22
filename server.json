@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "ai.achromat/mcp-server",
   "title": "Achromat MOM",
-  "description": "Recall and calibrate agent tool calls against verified policy lessons from Achromat MOM.",
-  "version": "0.1.3",
+  "description": "Recall and calibrate policy-compliant tool-call arguments before execution across fintech payments and credit decisions, industrial and robotics actuation, and DevSecOps commands, deployments and access changes. Does not execute the underlying business tool.",
+  "version": "0.1.4",
   "websiteUrl": "https://mom.achromat.ai",
   "repository": {
     "url": "https://github.com/achromat-ai/achromat-mcp-server",
