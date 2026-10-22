@@ -1,6 +1,6 @@
 {
   "name": "@achromat-ai/mcp-server",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "mcpName": "ai.achromat/mcp-server",
   "description": "MCP server that lets an agent recall and calibrate tool calls against Achromat MOM (mom.achromat.ai), from any MCP host.",
   "type": "module",
