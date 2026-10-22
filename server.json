@@ -3,12 +3,18 @@
   "name": "ai.achromat/mcp-server",
   "title": "Achromat MOM",
   "description": "Recall and calibrate agent tool calls against verified policy lessons from Achromat MOM.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "websiteUrl": "https://mom.achromat.ai",
   "repository": {
     "url": "https://github.com/achromat-ai/achromat-mcp-server",
     "source": "github"
   },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mom.achromat.ai/mcp"
+    }
+  ],
   "packages": [
     {
       "registryType": "npm",
