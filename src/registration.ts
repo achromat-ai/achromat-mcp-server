@@ -9,7 +9,9 @@
  *   6. move the temporary file to its final path, refusing to overwrite anything that is there
  *
  * The protocol is skill.md section 2. Neither call is signed (there is no identity yet), so this module does
- * not use MomClient.
+ * not use MomClient. When ACHROMAT_REF is set, both calls carry it as `?ref=<tag>` (and so does the retry's fresh
+ * challenge), which is how the service attributes a registration to the link that brought the install. It is sent
+ * nowhere else.
  *
  * The private key cannot be replaced, and registration is limited to 10 a day per network, so the order above
  * is what keeps two states from ever existing:
@@ -25,7 +27,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { chmodSync, existsSync, linkSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
-import type { Config } from "./config.js";
+import { parseRef, type Config } from "./config.js";
 import { parseAgentKey, type AgentKey } from "./crypto.js";
 import { POW_ALGORITHM, PowError, solvePow, type SolveOptions, type Solution } from "./pow.js";
 
@@ -33,6 +35,12 @@ export const REGISTER_CONTEXT = "achromat-register-v1";
 export const CHALLENGE_PATH = "/api/v1/agents/challenge";
 export const REGISTER_PATH = "/api/v1/agents/register";
 export const REQUEST_TIMEOUT_MS = 30_000;
+
+/** `path` with `?ref=<tag>` when there is a valid tag, otherwise `path` unchanged. */
+export function withRef(path: string, ref: string | undefined): string {
+  const tag = parseRef(ref);
+  return tag === "" ? path : `${path}?ref=${encodeURIComponent(tag)}`;
+}
 
 /** What the new key signs to prove it holds the private half: `achromat-register-v1` LF challenge LF public_key. */
 export function proofOfPossessionMessage(challenge: string, publicKey: string): string {
@@ -168,7 +176,7 @@ class Registration {
   }
 
   private async fetchChallenge(): Promise<Challenge | RegistrationOutcome> {
-    const result = await this.exchange(CHALLENGE_PATH, { method: "GET" });
+    const result = await this.exchange(withRef(CHALLENGE_PATH, this.config.ref), { method: "GET" });
     if (!("response" in result)) return result;
     const { response, body } = result;
     if (response.status !== 200) return this.refusal(response, body);
@@ -209,7 +217,7 @@ class Registration {
         nonce: solution.nonce,
         proof_signature: key.sign(proofOfPossessionMessage(challenge.challenge, key.publicKey)),
       });
-      const result = await this.exchange(REGISTER_PATH, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+      const result = await this.exchange(withRef(REGISTER_PATH, this.config.ref), { method: "POST", headers: { "Content-Type": "application/json" }, body });
       if (!("response" in result)) return { outcome: result, agentKey: null, role: null, pow: lastPow };
       const { response, body: answer } = result;
 

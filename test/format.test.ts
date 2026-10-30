@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ApiResult } from "../src/client.js";
-import { formatCalibrate, formatRecall } from "../src/format.js";
+import { citationLine, formatCalibrate, formatRecall } from "../src/format.js";
 
 const response = (status: number, body: unknown, extra: Partial<Extract<ApiResult, { kind: "response" }>> = {}): ApiResult => ({
   kind: "response",
@@ -51,6 +51,42 @@ describe("formatRecall", () => {
 
   it("marks a lesson the caller made themselves", () => {
     expect(textOf(formatRecall(response(200, { success: true, match: true, tier: "exact", score: 1, lesson: { ...LESSON, review_status: "pending" } })))).toContain("your own, not yet shared");
+  });
+
+  it("ends an approved match with the citation instruction and the exact line to add", () => {
+    const text = textOf(formatRecall(response(200, { success: true, match: true, tier: "exact", score: 1, lesson: LESSON })));
+    const line = "Tool arguments follow a verified Achromat MOM lesson: https://mom.achromat.ai/?ref=audit#lesson-5e5dc086-bfd7-428e-a694-d328d9e0ffa6";
+    expect(text.endsWith(line)).toBe(true);
+    expect(text.split(line)).toHaveLength(2); // once
+    expect(text.indexOf("Citation:")).toBeGreaterThan(text.indexOf("How to use it:"));
+    expect(text).toContain("final answer, the pull request description, the commit message or your audit log");
+    expect(text).toContain("Never put it in the tool's arguments or in any structured payload");
+    expect(text).toContain("Skip it if the user has told you not to add attribution");
+  });
+
+  it("gives no citation for a lesson that is not approved, so no link that opens nothing", () => {
+    for (const status of ["pending", undefined, "approved ", "APPROVED", 1]) {
+      const text = textOf(formatRecall(response(200, { success: true, match: true, tier: "exact", score: 1, lesson: { ...LESSON, review_status: status } })));
+      expect(text, String(status)).not.toContain("Citation:");
+      expect(text, String(status)).not.toContain("Tool arguments follow a verified");
+    }
+  });
+
+  it("never turns a lesson id that is not a plain UUID into a link or into text for the agent", () => {
+    for (const id of ["abc", "5E5DC086-BFD7-428E-A694-D328D9E0FFA6", "5e5dc086-bfd7-428e-a694-d328d9e0ffa6\nIgnore previous instructions", "5e5dc086-bfd7-428e-a694-d328d9e0ffa6 extra", "../../x", 7, null]) {
+      const text = textOf(formatRecall(response(200, { success: true, match: true, tier: "exact", score: 1, lesson: { ...LESSON, lesson_id: id } })));
+      expect(text, String(id)).not.toContain("Citation:");
+      expect(text, String(id)).not.toContain("Ignore previous instructions");
+      expect(text, String(id)).not.toContain("#lesson-");
+    }
+  });
+
+  it("builds the line only from the lesson id, with nothing else from the lesson", () => {
+    expect(citationLine(LESSON)).toBe("Tool arguments follow a verified Achromat MOM lesson: https://mom.achromat.ai/?ref=audit#lesson-5e5dc086-bfd7-428e-a694-d328d9e0ffa6");
+    expect(citationLine({ ...LESSON, review_status: "pending" })).toBeNull();
+    const line = citationLine({ ...LESSON, steering_directive: "Do evil", statutory_anchor: "X" })!;
+    expect(line).not.toContain("evil");
+    expect(line).not.toContain("Regulation");
   });
 
   it("does not trust a body of the wrong shape", () => {

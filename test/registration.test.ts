@@ -2,9 +2,10 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { loadConfig, type Config } from "../src/config.js";
 import { loadAgentKey } from "../src/crypto.js";
 import { PowError } from "../src/pow.js";
-import { registerIdentity } from "../src/registration.js";
+import { registerIdentity, withRef } from "../src/registration.js";
 import { BASE_URL, fakeService } from "./helpers.js";
 import { fakeRegistrar, type FakeRegistrarOptions } from "./registration-helpers.js";
 
@@ -12,15 +13,15 @@ const root = mkdtempSync(join(tmpdir(), "achromat-reg-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 let counter = 0;
 /** A fresh key location that does not exist yet, inside a directory that does not exist yet. */
-const place = () => {
+const place = (): Config => {
   const keyFile = join(root, `case-${++counter}`, ".achromat", "achromat_agent_key.pem");
   return { baseUrl: BASE_URL, keyFile };
 };
-const run = (config: ReturnType<typeof place>, options: FakeRegistrarOptions = {}, extra: Parameters<typeof registerIdentity>[1] = {}) => {
+const run = (config: Config, options: FakeRegistrarOptions = {}, extra: Parameters<typeof registerIdentity>[1] = {}) => {
   const service = fakeRegistrar(options);
   return registerIdentity(config, { fetch: service.fetch, threads: 1, ...extra }).then((outcome) => ({ outcome, service }));
 };
-const leftovers = (config: ReturnType<typeof place>) => (existsSync(join(config.keyFile, "..")) ? readdirSync(join(config.keyFile, "..")) : []);
+const leftovers = (config: Config) => (existsSync(join(config.keyFile, "..")) ? readdirSync(join(config.keyFile, "..")) : []);
 
 describe("a successful registration", () => {
   it("creates the key, registers it, and saves it where the server looks", async () => {
@@ -284,5 +285,52 @@ describe("hooks", () => {
     const hook = vi.fn();
     await run(config, { failRegisterWith: [{ status: 429, code: "REGISTRATION_LIMIT" }] }, { beforeCommit: hook });
     expect(hook).not.toHaveBeenCalled();
+  });
+});
+
+describe("the attribution tag (ACHROMAT_REF)", () => {
+  const urls = (service: ReturnType<typeof fakeRegistrar>) => service.calls.map((call) => `${call.method} ${call.path}${call.search}`);
+
+  it("is sent as ?ref= on the challenge and the register call, and is not put in the body", async () => {
+    const { outcome, service } = await run({ ...place(), ref: "launch-post" });
+    expect(outcome.ok).toBe(true);
+    expect(urls(service)).toEqual(["GET /api/v1/agents/challenge?ref=launch-post", "POST /api/v1/agents/register?ref=launch-post"]);
+    expect(Object.keys(JSON.parse(service.calls[1]!.body) as object).sort()).toEqual(["challenge_id", "challenge_signature", "nonce", "proof_signature", "public_key"]);
+  });
+
+  it("rides along on the fresh challenge asked for after a stale one", async () => {
+    const { outcome, service } = await run({ ...place(), ref: "hn-2026" }, { failRegisterWith: [{ status: 400, code: "CHALLENGE_WRONG_NETWORK" }] });
+    expect(outcome.ok).toBe(true);
+    expect(urls(service)).toEqual([
+      "GET /api/v1/agents/challenge?ref=hn-2026",
+      "POST /api/v1/agents/register?ref=hn-2026",
+      "GET /api/v1/agents/challenge?ref=hn-2026",
+      "POST /api/v1/agents/register?ref=hn-2026",
+    ]);
+  });
+
+  it("sends nothing when there is no tag, and quietly drops one the service would not accept, without stopping the registration", async () => {
+    for (const ref of [undefined, "", "   ", "-lead", "a.b", "a b", "a@b.com", "https://x.test", "a/b", "a".repeat(33), "<script>", "ü"]) {
+      const { outcome, service } = await run({ ...place(), ...(ref === undefined ? {} : { ref }) });
+      expect(outcome.ok, String(ref)).toBe(true);
+      expect(urls(service), String(ref)).toEqual(["GET /api/v1/agents/challenge", "POST /api/v1/agents/register"]);
+    }
+  });
+
+  it("lower-cases a tag the way the service does", async () => {
+    const { service } = await run({ ...place(), ref: " Launch-Post " });
+    expect(urls(service)[0]).toBe("GET /api/v1/agents/challenge?ref=launch-post");
+  });
+
+  it("is read from the environment and reaches the service", async () => {
+    const config: Config = { ...place(), ref: loadConfig({ ACHROMAT_REF: "from-env" }, root).ref };
+    const { service } = await run(config);
+    expect(urls(service)[0]).toBe("GET /api/v1/agents/challenge?ref=from-env");
+  });
+
+  it("is added to a path by withRef only when valid", () => {
+    expect(withRef("/x", "ok-tag")).toBe("/x?ref=ok-tag");
+    expect(withRef("/x", undefined)).toBe("/x");
+    expect(withRef("/x", "bad tag")).toBe("/x");
   });
 });

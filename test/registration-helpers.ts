@@ -21,7 +21,7 @@ export interface FakeRegistrarOptions {
 export function fakeRegistrar(options: FakeRegistrarOptions = {}) {
   const issued = new Map<string, { challenge: string; signature: string; used: boolean; bits: number }>();
   const keys = new Set<string>();
-  const calls: Array<{ method: string; path: string; body: string; userAgent: string | null }> = [];
+  const calls: Array<{ method: string; path: string; search: string; body: string; userAgent: string | null }> = [];
   const queuedFailures = [...(options.failRegisterWith ?? [])];
 
   const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
@@ -33,7 +33,7 @@ export function fakeRegistrar(options: FakeRegistrarOptions = {}) {
     const headers = new Headers(init?.headers);
     const method = init?.method ?? "GET";
     const body = typeof init?.body === "string" ? init.body : "";
-    calls.push({ method, path: url.pathname, body, userAgent: headers.get("User-Agent") });
+    calls.push({ method, path: url.pathname, search: url.search, body, userAgent: headers.get("User-Agent") });
     // Registration is unauthenticated: a signed request here would be a bug.
     if (headers.has("Achromat-Signature") || headers.has("Achromat-Agent-Key")) return error(400, "UNEXPECTED_SIGNATURE");
 

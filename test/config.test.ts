@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_BASE_URL, DEFAULT_KEY_FILE, expandHome, loadConfig } from "../src/config.js";
+import { DEFAULT_BASE_URL, DEFAULT_KEY_FILE, expandHome, loadConfig, parseRef } from "../src/config.js";
 
 const HOME = "/home/someone";
 
@@ -55,5 +55,30 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ACHROMAT_BASE_URL: "not a url" }, HOME)).toThrow(/not a valid URL/);
     expect(() => loadConfig({ ACHROMAT_BASE_URL: "file:///etc/passwd" }, HOME)).toThrow(/https/);
     expect(() => loadConfig({ ACHROMAT_BASE_URL: "javascript:alert(1)" }, HOME)).toThrow();
+  });
+});
+
+describe("ACHROMAT_REF", () => {
+  it("is empty by default", () => {
+    expect(loadConfig({}, HOME).ref).toBe("");
+  });
+
+  it("accepts a slug of 1 to 32 characters and lower-cases it", () => {
+    for (const ref of ["a", "launch", "hn-2026_10", "0day", "a".repeat(32)]) expect(loadConfig({ ACHROMAT_REF: ref }, HOME).ref, ref).toBe(ref);
+    expect(loadConfig({ ACHROMAT_REF: "  Launch-Post " }, HOME).ref).toBe("launch-post");
+  });
+
+  it("ignores anything else and never throws, so a bad tag cannot stop the server starting", () => {
+    for (const raw of ["", "   ", "-lead", "_lead", "a.b", "a b", "a@b.com", "https://x.test", "a/b", "é", "a".repeat(33), "<script>"]) {
+      expect(() => loadConfig({ ACHROMAT_REF: raw }, HOME), raw).not.toThrow();
+      expect(loadConfig({ ACHROMAT_REF: raw }, HOME).ref, raw).toBe("");
+    }
+  });
+
+  it("follows the service's own rule (parseRef)", () => {
+    expect(parseRef(undefined)).toBe("");
+    expect(parseRef(null)).toBe("");
+    expect(parseRef("Hn")).toBe("hn");
+    expect(parseRef("a".repeat(33))).toBe("");
   });
 });

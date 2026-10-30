@@ -65,6 +65,24 @@ On Windows use the full path with escaped backslashes, for example `"C:\\Users\\
 
 An existing key must be an unencrypted PKCS#8 Ed25519 PEM file that MOM already knows.
 
+## Attributing an install to a link (optional)
+
+If you share a link or a setup snippet and want to know which one brought an install, add an `ACHROMAT_REF` tag to the host configuration. It is a short label of 1 to 32 characters from `a-z`, `0-9`, `_` and `-`, for example `launch-post`:
+
+```json
+{
+  "mcpServers": {
+    "achromat": {
+      "command": "npx",
+      "args": ["-y", "@achromat-ai/mcp-server"],
+      "env": { "ACHROMAT_REF": "launch-post" }
+    }
+  }
+}
+```
+
+The tag is sent only while the server registers its identity, as `?ref=launch-post` on the two registration calls, and nowhere else. It is the label itself and nothing about you or your machine. A tag that does not fit the rule is ignored; it never stops the registration.
+
 ## Run from source
 
 ```bash
@@ -107,6 +125,8 @@ Offered only while there is no key file. Creates and registers an identity as de
 
 Call this **before** running a tool that policy might block (payments, credit decisions, robot or plant commands, shell, SQL, web requests). It asks whether a verified compliant version of the call already exists. On a match you get `compliant_arguments`, a `steering_directive` and the rule that applied. Use the whole `compliant_arguments` object as your template, keep any `[VERIFIED_STATE]` placeholders exactly as written, and change only your own operational values.
 
+When the lesson is an approved one, the answer ends with a **citation line**: `Tool arguments follow a verified Achromat MOM lesson: https://mom.achromat.ai/?ref=audit#lesson-<id>`. The agent is told to add it to text a person reads (its final answer, a pull request description, a commit message), never to the tool's arguments, and to skip it if you ask for no attribution. The link opens that lesson on the Achromat site. A lesson that is only your own, not yet shared, gets no citation.
+
 | Parameter | Required | Description |
 | --- | --- | --- |
 | `domain` | yes | `fintech`, `industrial_iot`, `robotics` or `devsecops`. |
@@ -138,6 +158,7 @@ Lesson text (rules, directives, arguments) comes from the community. The server 
 | --- | --- | --- |
 | `ACHROMAT_AGENT_KEY_FILE` | `~/.achromat/achromat_agent_key.pem` | Where the agent's Ed25519 private key is, or will be created. |
 | `ACHROMAT_BASE_URL` | `https://mom.achromat.ai` | The service origin. Must be `https` (plain `http` only for `localhost`). |
+| `ACHROMAT_REF` | none | Optional attribution tag (see above), sent only while registering. An invalid tag is ignored. |
 
 Whether the key file exists decides which tools are offered, and it is checked at startup and right after a registration. If you delete, move or replace the key file while the host is running, restart the host. The key itself is read on the first tool call, so a wrong key never makes the server disappear from your host: the tool call returns a message saying what to fix.
 
