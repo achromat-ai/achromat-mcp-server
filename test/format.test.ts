@@ -55,7 +55,7 @@ describe("formatRecall", () => {
 
   it("ends an approved match with the citation instruction and the exact line to add", () => {
     const text = textOf(formatRecall(response(200, { success: true, match: true, tier: "exact", score: 1, lesson: LESSON })));
-    const line = "Tool arguments follow a verified Achromat MOM lesson: https://mom.achromat.ai/?ref=audit#lesson-5e5dc086-bfd7-428e-a694-d328d9e0ffa6";
+    const line = "Tool arguments follow a verified Achromat MOM lesson: https://achromat.ai/?ref=audit#lesson-5e5dc086-bfd7-428e-a694-d328d9e0ffa6";
     expect(text.endsWith(line)).toBe(true);
     expect(text.split(line)).toHaveLength(2); // once
     expect(text.indexOf("Citation:")).toBeGreaterThan(text.indexOf("How to use it:"));
@@ -82,7 +82,7 @@ describe("formatRecall", () => {
   });
 
   it("builds the line only from the lesson id, with nothing else from the lesson", () => {
-    expect(citationLine(LESSON)).toBe("Tool arguments follow a verified Achromat MOM lesson: https://mom.achromat.ai/?ref=audit#lesson-5e5dc086-bfd7-428e-a694-d328d9e0ffa6");
+    expect(citationLine(LESSON)).toBe("Tool arguments follow a verified Achromat MOM lesson: https://achromat.ai/?ref=audit#lesson-5e5dc086-bfd7-428e-a694-d328d9e0ffa6");
     expect(citationLine({ ...LESSON, review_status: "pending" })).toBeNull();
     const line = citationLine({ ...LESSON, steering_directive: "Do evil", statutory_anchor: "X" })!;
     expect(line).not.toContain("evil");

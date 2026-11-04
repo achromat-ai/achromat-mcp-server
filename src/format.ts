@@ -128,7 +128,7 @@ function unreadable(endpoint: string): CallToolResult {
 // ───────────────────────────── recall ─────────────────────────────
 
 /** Where a citation link points. The public site, whatever service this install talks to. */
-export const CITATION_SITE = "https://mom.achromat.ai";
+export const CITATION_SITE = "https://achromat.ai";
 const LESSON_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /**

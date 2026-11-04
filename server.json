@@ -1,10 +1,10 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "ai.achromat/mcp-server",
-  "title": "Achromat MOM",
+  "title": "Achromat Machine Operational Memory",
   "description": "Recall and calibrate policy-compliant tool-call arguments before execution. Does not run the tool.",
-  "version": "0.1.4",
-  "websiteUrl": "https://mom.achromat.ai",
+  "version": "0.1.5",
+  "websiteUrl": "https://achromat.ai",
   "repository": {
     "url": "https://github.com/achromat-ai/achromat-mcp-server",
     "source": "github"
@@ -12,7 +12,7 @@
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://mom.achromat.ai/mcp"
+      "url": "https://achromat.ai/mcp"
     }
   ],
   "packages": [
@@ -20,7 +20,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@achromat-ai/mcp-server",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "transport": {
         "type": "stdio"
       },
@@ -38,7 +38,7 @@
           "description": "Service origin. Must be https (plain http is accepted only for localhost).",
           "isRequired": false,
           "isSecret": false,
-          "default": "https://mom.achromat.ai"
+          "default": "https://achromat.ai"
         },
         {
           "name": "ACHROMAT_REF",

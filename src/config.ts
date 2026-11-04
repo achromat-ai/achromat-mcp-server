@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 /** The service this proxy talks to. */
-export const DEFAULT_BASE_URL = "https://mom.achromat.ai";
+export const DEFAULT_BASE_URL = "https://achromat.ai";
 
 /** Where the agent's Ed25519 private key is expected when ACHROMAT_AGENT_KEY_FILE is not set. */
 export const DEFAULT_KEY_FILE = "~/.achromat/achromat_agent_key.pem";

@@ -9,13 +9,13 @@ import { KeyFileError, ServerClock, base64url, canonicalString, loadAgentKey, pa
 const VECTOR = {
   seedHex: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   publicKey: "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
-  host: "mom.achromat.ai",
+  host: "achromat.ai",
   path: "/api/v1/recall",
   timestamp: "1790000000",
   nonce: "AAECAwQFBgcICQoLDA0ODw",
   body: '{"domain":"fintech","tool":"transfer_funds","task_description":"Move client funds to the settlement account","arguments":{"amount":50000}}',
   bodySha256: "91f119d8da6881e815ac07761bfc9b89a3d0289af5dceb724b42926a455bbf88",
-  signature: "mPAMbWJ24bSAseFFTHQL0zo7UcmAb50J9LjFPHU8jxXuweWXE9J9pdzuOQqHMp4801FXi3SSLKHKRRzmB0t9BA",
+  signature: "Sw4duAH5yaIJj4KlUKfBT5Ea9BNnzinowXHA6p5lwqjcCCUF-CCdv88qKg0moPsmm3fpI5-Fw7oGtSMaDGDfBw",
 };
 
 /** An unencrypted PKCS#8 Ed25519 key for a 32-byte seed: the fixed DER prefix, then the seed. */
@@ -76,14 +76,14 @@ describe("request signing against the published test vector", () => {
 
   it("lowercases the host and uppercases the method, as the protocol says", () => {
     const base = { pathAndQuery: "/x", bodySha256Hex: "00", timestamp: "1", nonce: "n" };
-    expect(canonicalString({ ...base, host: "MOM.Achromat.AI", method: "post" })).toBe(canonicalString({ ...base, host: "mom.achromat.ai", method: "POST" }));
+    expect(canonicalString({ ...base, host: "ACHROMAT.Ai", method: "post" })).toBe(canonicalString({ ...base, host: "achromat.ai", method: "POST" }));
   });
 
   it("signs the host with its port, and the path with its query string, exactly as sent", () => {
     const sign = (url: string) =>
       signRequest({ key, method: "POST", url: new URL(url), body: new Uint8Array(0), timestampSeconds: 1790000000, nonce: VECTOR.nonce })["Achromat-Signature"];
-    expect(sign("https://mom.achromat.ai/api/v1/recall")).not.toBe(sign("https://mom.achromat.ai:8443/api/v1/recall"));
-    expect(sign("https://mom.achromat.ai/api/v1/recall")).not.toBe(sign("https://mom.achromat.ai/api/v1/recall?x=1"));
+    expect(sign("https://achromat.ai/api/v1/recall")).not.toBe(sign("https://achromat.ai:8443/api/v1/recall"));
+    expect(sign("https://achromat.ai/api/v1/recall")).not.toBe(sign("https://achromat.ai/api/v1/recall?x=1"));
   });
 
   it("verifies with an independent Ed25519 verifier, and not after the body changes", () => {

@@ -1,7 +1,7 @@
 import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
 import { canonicalString, parseAgentKey, sha256Hex, type AgentKey, type LoadedKey } from "../src/crypto.js";
 
-export const BASE_URL = "https://mom.achromat.ai";
+export const BASE_URL = "https://achromat.ai";
 
 /** A fresh Ed25519 key in memory. */
 export function freshKey(): AgentKey {

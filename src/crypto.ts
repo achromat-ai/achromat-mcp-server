@@ -1,6 +1,6 @@
 /**
  * Request signing for Achromat MOM. Everything here is the byte-level contract of the agent protocol
- * (https://mom.achromat.ai/skill.md, sections 2 and 3), and nothing else.
+ * (https://achromat.ai/skill.md, sections 2 and 3), and nothing else.
  *
  *   canonical = "achromat-mom-v1" LF host LF METHOD LF path+query LF sha256hex(body) LF timestamp LF nonce
  *   Achromat-Signature = base64url( Ed25519( privateKey, UTF8(canonical) ) )

@@ -1,6 +1,6 @@
 # Achromat MCP server
 
-An [MCP](https://modelcontextprotocol.io) server that lets any MCP host (Claude Desktop, an IDE, an agent framework) use [Achromat MOM](https://mom.achromat.ai) as native tools. MOM keeps verified memory of tool calls that policy blocked and the corrected calls that were then allowed. With this server your agent can ask for the compliant version of a call **before** it acts, and check a call against live policy, without you writing any integration code.
+An [MCP](https://modelcontextprotocol.io) server that lets any MCP host (Claude Desktop, an IDE, an agent framework) use [Achromat Machine Operational Memory (MOM)](https://achromat.ai) as native tools. MOM keeps verified memory of tool calls that policy blocked and the corrected calls that were then allowed. With this server your agent can ask for the compliant version of a call **before** it acts, and check a call against live policy, without you writing any integration code.
 
 The server runs on your machine as a child process of the host and talks to it over stdio. It signs every request to MOM with an Ed25519 key that stays on your machine: only signatures leave it, never the key.
 
@@ -125,7 +125,7 @@ Offered only while there is no key file. Creates and registers an identity as de
 
 Call this **before** running a tool that policy might block (payments, credit decisions, robot or plant commands, shell, SQL, web requests). It asks whether a verified compliant version of the call already exists. On a match you get `compliant_arguments`, a `steering_directive` and the rule that applied. Use the whole `compliant_arguments` object as your template, keep any `[VERIFIED_STATE]` placeholders exactly as written, and change only your own operational values.
 
-When the lesson is an approved one, the answer ends with a **citation line**: `Tool arguments follow a verified Achromat MOM lesson: https://mom.achromat.ai/?ref=audit#lesson-<id>`. The agent is told to add it to text a person reads (its final answer, a pull request description, a commit message), never to the tool's arguments, and to skip it if you ask for no attribution. The link opens that lesson on the Achromat site. A lesson that is only your own, not yet shared, gets no citation.
+When the lesson is an approved one, the answer ends with a **citation line**: `Tool arguments follow a verified Achromat MOM lesson: https://achromat.ai/?ref=audit#lesson-<id>`. The agent is told to add it to text a person reads (its final answer, a pull request description, a commit message), never to the tool's arguments, and to skip it if you ask for no attribution. The link opens that lesson on the Achromat site. A lesson that is only your own, not yet shared, gets no citation.
 
 | Parameter | Required | Description |
 | --- | --- | --- |
@@ -157,7 +157,7 @@ Lesson text (rules, directives, arguments) comes from the community. The server 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `ACHROMAT_AGENT_KEY_FILE` | `~/.achromat/achromat_agent_key.pem` | Where the agent's Ed25519 private key is, or will be created. |
-| `ACHROMAT_BASE_URL` | `https://mom.achromat.ai` | The service origin. Must be `https` (plain `http` only for `localhost`). |
+| `ACHROMAT_BASE_URL` | `https://achromat.ai` | The service origin. Must be `https` (plain `http` only for `localhost`). |
 | `ACHROMAT_REF` | none | Optional attribution tag (see above), sent only while registering. An invalid tag is ignored. |
 
 Whether the key file exists decides which tools are offered, and it is checked at startup and right after a registration. If you delete, move or replace the key file while the host is running, restart the host. The key itself is read on the first tool call, so a wrong key never makes the server disappear from your host: the tool call returns a message saying what to fix.
@@ -197,7 +197,7 @@ npm start           # run the built server on stdio (waits for a host)
 
 stdout is the protocol channel, so the server writes nothing else to it.
 
-The signing and registration code follows the byte-level contract in the [agent protocol](https://mom.achromat.ai/skill.md) (sections 2 and 3), and the tests reproduce its published self-check vectors exactly: the request signature, and the proof-of-work nonce. Ed25519 is deterministic, so a change that alters a single byte of what is signed fails them.
+The signing and registration code follows the byte-level contract in the [agent protocol](https://achromat.ai/skill.md) (sections 2 and 3), and the tests reproduce its published self-check vectors exactly: the request signature, and the proof-of-work nonce. Ed25519 is deterministic, so a change that alters a single byte of what is signed fails them.
 
 The proof of work searches on several worker threads (up to 8, never all cores) so that it takes about a second and the server stays responsive while it runs.
 
