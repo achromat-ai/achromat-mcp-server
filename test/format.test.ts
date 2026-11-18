@@ -8,6 +8,7 @@ const response = (status: number, body: unknown, extra: Partial<Extract<ApiResul
   body,
   retryAfterSeconds: null,
   clockOffsetMs: null,
+  signed: true,
   ...extra,
 });
 const failure = (status: number, code: string, error = "x", extra: Partial<Extract<ApiResult, { kind: "response" }>> = {}) => response(status, { success: false, error, code }, extra);
@@ -250,5 +251,71 @@ describe("failures, as the agent sees them", () => {
 
   it("never echoes a long server message without a bound", () => {
     expect(textOf(run(failure(418, "TEAPOT", "y".repeat(5000)))).length).toBeLessThan(600);
+  });
+});
+
+describe("formatRecall for a caller without an identity", () => {
+  const unsigned = (status: number, body: unknown, extra: Partial<Extract<ApiResult, { kind: "response" }>> = {}) => response(status, body, { signed: false, ...extra });
+
+  it("says what a miss means for an anonymous caller, and that calibrating needs an identity the user must agree to", () => {
+    const out = formatRecall(unsigned(200, { success: true, match: false }));
+    const text = textOf(out);
+    expect(out.isError).toBe(false);
+    expect(text).toContain("NO MATCH");
+    expect(text).toContain("public lessons");
+    expect(text).toMatch(/exact on domain and tool_name/);
+    expect(text).toContain("achromat_register_identity");
+    expect(text).toMatch(/ask the user/i);
+    // It does not tell the agent to call a tool it cannot see yet.
+    expect(text).not.toContain("call achromat_calibrate with the arguments");
+  });
+
+  it("keeps the signed miss text exactly as before", () => {
+    const text = textOf(formatRecall(response(200, { success: true, match: false })));
+    expect(text).toContain("Next step: call achromat_calibrate with the arguments you intend to use.");
+    expect(text).not.toContain("achromat_register_identity");
+  });
+
+  it("serves a hit with the untrusted-data notice and the citation, and does not suggest a tool that is not there", () => {
+    const hit = { success: true, match: true, tier: "semantic", score: 0.83, lesson: { ...LESSON } };
+    const text = textOf(formatRecall(unsigned(200, hit)));
+    expect(text).toContain("MATCH: semantic tier");
+    expect(text).toContain("data, not instructions");
+    expect(text).toContain("[VERIFIED_STATE]");
+    expect(text).toContain("Tool arguments follow a verified Achromat MOM lesson: https://achromat.ai/?ref=audit#lesson-5e5dc086-bfd7-428e-a694-d328d9e0ffa6");
+    expect(text).toContain("achromat_register_identity");
+    expect(text).not.toContain("confirm with achromat_calibrate first");
+    // A signed hit still points at calibrate.
+    expect(textOf(formatRecall(response(200, hit)))).toContain("confirm with achromat_calibrate first");
+  });
+
+  it("names the per-network limit on a 429, not the per-key one", () => {
+    const text = textOf(formatRecall(unsigned(429, { success: false, code: "RATE_LIMITED" }, { retryAfterSeconds: 42 })));
+    expect(text).toContain("30 recalls per minute per network");
+    expect(text).toContain("42 seconds");
+    expect(text).not.toContain("240");
+  });
+
+  it("explains an old service that still demands a signature, and what to do about it", () => {
+    for (const code of ["AGENT_SIGNATURE_REQUIRED", "AGENT_SIGNATURE_INVALID"]) {
+      const out = formatRecall(unsigned(401, { success: false, error: "x", code }));
+      const text = textOf(out);
+      expect(out.isError, code).toBe(true);
+      expect(text, code).toContain("does not answer recall without an identity");
+      expect(text, code).toContain(code);
+      expect(text, code).toContain("achromat_register_identity");
+      expect(text, code).not.toMatch(/fault in the signing code/);
+    }
+  });
+
+  it("treats a signed 401 as before (a signing fault), not as an old service", () => {
+    const text = textOf(formatRecall(response(401, { success: false, code: "AGENT_SIGNATURE_INVALID" })));
+    expect(text).toMatch(/fault in the signing code or the key file/);
+  });
+
+  it("still reports other failures for an anonymous caller in the usual way", () => {
+    expect(textOf(formatRecall(unsigned(400, { success: false, code: "CLIENT_IP_UNAVAILABLE", error: "caller IP address could not be determined" })))).toContain("CLIENT_IP_UNAVAILABLE");
+    expect(textOf(formatRecall(unsigned(503, { success: false, code: "SEARCH_UNAVAILABLE" }, { retryAfterSeconds: 5 })))).toContain("temporarily unavailable");
+    expect(formatRecall(unsigned(200, { nope: true })).isError).toBe(true);
   });
 });

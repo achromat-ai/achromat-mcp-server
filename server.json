@@ -3,7 +3,7 @@
   "name": "ai.achromat/mcp-server",
   "title": "Achromat Machine Operational Memory",
   "description": "Recall and calibrate policy-compliant tool-call arguments before execution. Does not run the tool.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "websiteUrl": "https://achromat.ai",
   "repository": {
     "url": "https://github.com/achromat-ai/achromat-mcp-server",
@@ -20,7 +20,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@achromat-ai/mcp-server",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "transport": {
         "type": "stdio"
       },
@@ -42,7 +42,7 @@
         },
         {
           "name": "ACHROMAT_REF",
-          "description": "Optional attribution tag (1 to 32 characters from a-z, 0-9, _ and -) sent as ?ref= on the registration calls only. An invalid tag is ignored.",
+          "description": "Optional attribution tag (1 to 32 characters from a-z, 0-9, _ and -) sent as ?ref= on registration calls and on recall requests made without an identity. An invalid tag is ignored.",
           "isRequired": false,
           "isSecret": false
         }

@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { describe, expect, it } from "vitest";
 import { MomClient } from "../src/client.js";
 import { KeyFileError } from "../src/crypto.js";
-import { calibrateInput, recallInput, registerTools, toRequestBody } from "../src/tools.js";
+import { COVERAGE, DOMAINS, calibrateInput, recallInput, registerTools, toRequestBody } from "../src/tools.js";
 import { BASE_URL, fakeService, freshKey, loaded, type FakeServiceOptions } from "./helpers.js";
 
 /** A real MCP client talking to the real server over an in-memory pipe. */
@@ -115,24 +115,57 @@ describe("achromat_recall", () => {
     expect(text(result)).toContain("AGENT_KEY_UNKNOWN");
   });
 
-  it("explains a missing key file in the tool result and keeps the server alive", async () => {
+  it("sends recall without a signature when there is no key file, and signs it once the file exists", async () => {
     let present = false;
     const key = freshKey();
-    const { client, service } = await connect({ respond: () => ({ status: 200, body: { success: true, match: false } }) }, () => {
+    const { client, service } = await connect({ optionalSignature: true, respond: () => ({ status: 200, body: { success: true, match: false } }) }, () => {
       if (!present) throw new KeyFileError("NOT_FOUND", "No agent key found at /k.pem. Create and register one.");
       return loaded(key);
     });
     const args = { domain: "fintech", tool_name: "dispatch_wire", task_description: TASK, arguments: { a: 1 } };
     const first = await client.callTool({ name: "achromat_recall", arguments: args });
-    expect(first.isError).toBe(true);
-    expect(text(first)).toContain("No agent key found at /k.pem");
-    expect(text(first)).toContain("Nothing was sent");
-    expect(service.calls).toHaveLength(0);
+    expect(first.isError).toBe(false);
+    expect(text(first)).toContain("NO MATCH");
+    expect(service.calls).toHaveLength(1);
+    expect(service.calls[0]!.signed).toBe(false);
     present = true;
     const second = await client.callTool({ name: "achromat_recall", arguments: args });
     expect(second.isError).toBe(false);
-    expect(text(second)).toContain("NO MATCH");
+    expect(service.calls).toHaveLength(2);
+    expect(service.calls[1]!.signed).toBe(true);
+    expect(service.calls[1]!.headers.get("Achromat-Agent-Key")).toBe(key.publicKey);
+  });
+
+  it("never sends recall unsigned because a key file is broken: a key that exists but cannot be used is reported", async () => {
+    for (const problem of ["UNREADABLE", "INVALID", "ENCRYPTED", "WRONG_TYPE"] as const) {
+      const { client, service } = await connect({ optionalSignature: true }, () => {
+        throw new KeyFileError(problem, `the key file is ${problem}`);
+      });
+      const result = await client.callTool({ name: "achromat_recall", arguments: { domain: "fintech", tool_name: "dispatch_wire", task_description: TASK, arguments: { a: 1 } } });
+      expect(result.isError, problem).toBe(true);
+      expect(text(result), problem).toContain(`the key file is ${problem}`);
+      expect(text(result), problem).toContain("Nothing was sent");
+      expect(service.calls, problem).toHaveLength(0);
+    }
+  });
+
+  it("explains a missing key file for calibrate in the tool result, sends nothing, and keeps the server alive", async () => {
+    let present = false;
+    const key = freshKey();
+    const { client, service } = await connect({ respond: () => ({ status: 200, body: { success: true, verdict: "ALLOW" } }) }, () => {
+      if (!present) throw new KeyFileError("NOT_FOUND", "No agent key found at /k.pem. Create and register one.");
+      return loaded(key);
+    });
+    const args = { domain: "fintech", tool_name: "dispatch_wire", task_description: TASK, arguments: { a: 1 } };
+    const first = await client.callTool({ name: "achromat_calibrate", arguments: args });
+    expect(first.isError).toBe(true);
+    expect(text(first)).toContain("No agent key found at /k.pem");
+    expect(text(first)).toContain("Nothing was sent");
+    expect(service.calls).toHaveLength(0); // calibrate is never sent unsigned
+    present = true;
+    await client.callTool({ name: "achromat_calibrate", arguments: args });
     expect(service.calls).toHaveLength(1);
+    expect(service.calls[0]!.signed).toBe(true);
   });
 });
 
@@ -196,5 +229,42 @@ describe("toRequestBody", () => {
     expect(recallInput.arguments.safeParse({}).success).toBe(false);
     expect(recallInput.arguments.safeParse({ a: 1 }).success).toBe(true);
     expect(calibrateInput.arguments.safeParse(undefined).success).toBe(false);
+  });
+});
+
+describe("the achromat_recall description tells the agent what has coverage", () => {
+  it("lists every covered domain and tool name, so a host passes a name that can match", async () => {
+    const { client } = await connect();
+    const recall = (await client.listTools()).tools.find((tool) => tool.name === "achromat_recall")!;
+    for (const [domain, tools] of Object.entries(COVERAGE)) {
+      expect(recall.description, domain).toContain(domain);
+      for (const tool of tools) expect(recall.description, `${domain}/${tool}`).toContain(tool);
+      expect((DOMAINS as readonly string[]).includes(domain), `${domain} is a domain the tool accepts`).toBe(true);
+    }
+    expect(Object.keys(COVERAGE).sort()).toEqual(["devsecops", "fintech", "industrial_iot"]);
+  });
+
+  it("says matching is exact, names examples that have no lessons, and points robot commands at industrial_iot", async () => {
+    const { client } = await connect();
+    const recall = (await client.listTools()).tools.find((tool) => tool.name === "achromat_recall")!;
+    expect(recall.description).toMatch(/exact on domain and tool_name/);
+    expect(recall.description).toMatch(/bash, psql or postgres_query/);
+    expect(recall.description).toMatch(/Use industrial_iot for robot and plant commands/);
+    expect(recall.description).toMatch(/robotics domain has no lessons yet/);
+    const toolName = (recall.inputSchema.properties as Record<string, { description: string }>).tool_name!.description;
+    expect(toolName).toMatch(/exact on domain and tool name/);
+  });
+
+  it("says recall needs no identity, and that calibrate does", async () => {
+    const { client } = await connect();
+    const tools = (await client.listTools()).tools;
+    expect(tools.find((tool) => tool.name === "achromat_recall")!.description).toMatch(/needs no identity/);
+    expect(tools.find((tool) => tool.name === "achromat_calibrate")!.description).toMatch(/needs a registered identity/);
+  });
+
+  it("keeps the full product name in the model-facing descriptions", async () => {
+    const { client } = await connect();
+    for (const tool of (await client.listTools()).tools) expect(tool.description ?? "", tool.name).not.toMatch(/Achromat MOM\b/);
+    expect((await client.listTools()).tools.find((tool) => tool.name === "achromat_recall")!.description).toContain("Achromat Machine Operational Memory");
   });
 });

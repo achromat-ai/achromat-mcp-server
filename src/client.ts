@@ -1,13 +1,19 @@
 /**
- * The signed HTTP client for Achromat MOM. It owns the lifecycle of one request: load the key (once, and
- * lazily), sign, send, learn the server clock from the answer, and retry once if the clock was the problem.
+ * The HTTP client for Achromat Machine Operational Memory. It owns the lifecycle of one request: load the key (once,
+ * and lazily), sign, send, learn the server clock from the answer, and retry once if the clock was the problem.
+ *
+ * `post` is always signed: with no usable key it returns a local error and sends nothing. `postOptionallySigned` is for
+ * recall only, which the service answers without a signature: when there is NO key file at all it sends the same
+ * request with no Achromat-* header, and the service treats it as an anonymous caller (public approved lessons only).
+ * It never sends an unsigned request because a key was unreadable, corrupt or the wrong type, and it never sends a
+ * partial set of headers: the service refuses any request that carries some Achromat-* header with 401.
  *
  * It never throws for anything a tool call can run into. It returns an ApiResult, and format.ts turns that
  * into text for the agent. A bad key file is a result too, not a crash: an MCP host shows only "server
  * disconnected" when a child process dies, so the server stays up and each call explains what to fix.
  */
 import { randomBytes as nodeRandomBytes } from "node:crypto";
-import type { Config } from "./config.js";
+import { parseRef, type Config } from "./config.js";
 import { KeyFileError, ServerClock, base64url, loadAgentKey, NONCE_BYTES, signRequest, type LoadedKey } from "./crypto.js";
 
 /** The service rejects signed bodies over 64 KiB. */
@@ -15,8 +21,12 @@ export const MAX_BODY_BYTES = 64 * 1024;
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
 export type ApiResult =
-  /** The service answered. `body` is the parsed JSON, or null if the answer was not JSON. */
-  | { kind: "response"; status: number; body: unknown; retryAfterSeconds: number | null; clockOffsetMs: number | null }
+  /**
+   * The service answered. `body` is the parsed JSON, or null if the answer was not JSON. `signed` is false for a
+   * request that went out with no signature (postOptionallySigned without a key file), so the caller can word its
+   * answer for an anonymous caller.
+   */
+  | { kind: "response"; status: number; body: unknown; retryAfterSeconds: number | null; clockOffsetMs: number | null; signed: boolean }
   /** The request never produced an answer: a key problem, an oversized body, or the network. */
   | { kind: "local"; code: LocalErrorCode; message: string };
 
@@ -88,14 +98,29 @@ export class MomClient {
     return this.loaded;
   }
 
-  /** A signed POST of a JSON object. */
+  /** A signed POST of a JSON object. With no usable key it sends nothing. */
   async post(path: string, payload: Record<string, unknown>): Promise<ApiResult> {
-    let loaded: LoadedKey;
+    return this.send(path, payload, false);
+  }
+
+  /**
+   * A POST that is signed when a key file exists and unsigned when there is none (and only then). For recall.
+   * An unsigned request carries `?ref=` from ACHROMAT_REF, if valid, so the service can tell which link brought this install.
+   */
+  async postOptionallySigned(path: string, payload: Record<string, unknown>): Promise<ApiResult> {
+    return this.send(path, payload, true);
+  }
+
+  private async send(path: string, payload: Record<string, unknown>, allowUnsigned: boolean): Promise<ApiResult> {
+    let loaded: LoadedKey | null;
     try {
       loaded = this.key();
     } catch (error) {
-      if (error instanceof KeyFileError) return { kind: "local", code: KEY_PROBLEM_CODE[error.problem], message: error.message };
-      throw error;
+      if (!(error instanceof KeyFileError)) throw error;
+      // Only an ABSENT key file may fall back to an anonymous request. A key that exists but cannot be used is a problem
+      // the user has to hear about, not something to hide by quietly sending less.
+      if (allowUnsigned && error.problem === "NOT_FOUND") loaded = null;
+      else return { kind: "local", code: KEY_PROBLEM_CODE[error.problem], message: error.message };
     }
 
     // Serialised once: these exact bytes are hashed, signed and sent.
@@ -105,19 +130,26 @@ export class MomClient {
     }
 
     const url = new URL(path, this.config.baseUrl);
+    const ref = parseRef(this.config.ref);
+    if (loaded === null && ref !== "") url.searchParams.set("ref", ref);
     let result = await this.attempt(loaded, url, body);
     // A clock more than 60 seconds out is rejected before anything else happens, so it is safe to resend.
     // The rejection itself carries the server's Date, so the second attempt is signed with the right time.
-    if (result.kind === "response" && result.status === 401 && errorCode(result.body) === "AGENT_SIGNATURE_EXPIRED" && this.clock.isSynchronised) {
+    // An unsigned request has no timestamp to be wrong, so this applies to signed requests only.
+    if (loaded !== null && result.kind === "response" && result.status === 401 && errorCode(result.body) === "AGENT_SIGNATURE_EXPIRED" && this.clock.isSynchronised) {
       result = await this.attempt(loaded, url, body);
     }
     return result;
   }
 
-  private async attempt(loaded: LoadedKey, url: URL, body: Buffer): Promise<ApiResult> {
-    const timestampSeconds = Math.floor(this.clock.serverTime(this.now()) / 1000);
-    const nonce = base64url(this.randomBytes(NONCE_BYTES));
-    const signed = signRequest({ key: loaded.key, method: "POST", url, body, timestampSeconds, nonce });
+  /** One send. `loaded` null means no signature: the request carries no Achromat-* header at all. */
+  private async attempt(loaded: LoadedKey | null, url: URL, body: Buffer): Promise<ApiResult> {
+    let signed: Partial<ReturnType<typeof signRequest>> = {};
+    if (loaded !== null) {
+      const timestampSeconds = Math.floor(this.clock.serverTime(this.now()) / 1000);
+      const nonce = base64url(this.randomBytes(NONCE_BYTES));
+      signed = signRequest({ key: loaded.key, method: "POST", url, body, timestampSeconds, nonce });
+    }
 
     let response: Response;
     let text: string;
@@ -152,6 +184,7 @@ export class MomClient {
       body: parsed,
       retryAfterSeconds: parseRetryAfter(response.headers.get("Retry-After"), receivedAt),
       clockOffsetMs: this.clock.isSynchronised ? this.clock.offsetMs : null,
+      signed: loaded !== null,
     };
   }
 }

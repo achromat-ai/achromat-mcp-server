@@ -23,7 +23,8 @@ async function boot(extra: Partial<ToolDeps> = {}, registrarOptions: Parameters<
   const keyFile = join(root, `case-${++counter}`, ".achromat", "achromat_agent_key.pem");
   const config = { baseUrl: BASE_URL, keyFile };
   const registrar = fakeRegistrar({ difficultyBits: 12, ...registrarOptions });
-  const momService = fakeService({ respond: () => ({ status: 200, body: { success: true, match: false } }) });
+  // The deployed service answers recall with no signature, and still checks any request that carries an Achromat-* header.
+  const momService = fakeService({ optionalSignature: true, respond: () => ({ status: 200, body: { success: true, match: false } }) });
   const momClient = new MomClient(config, { fetch: momService.fetch });
   const server = new McpServer({ name: "test", version: "0.0.0" });
   const controller = registerTools(server, momClient, { config, registrationDeps: { fetch: registrar.fetch, threads: 1 }, ...extra });
@@ -37,25 +38,37 @@ async function boot(extra: Partial<ToolDeps> = {}, registrarOptions: Parameters<
 }
 
 describe("which tools are offered", () => {
-  it("offers only achromat_register_identity while there is no key file", async () => {
+  it("offers recall and registration, but not calibrate, while there is no key file", async () => {
     const { names, controller } = await boot();
-    expect(await names()).toEqual(["achromat_register_identity"]);
-    expect(controller.active()).toEqual(["achromat_register_identity"]);
+    expect(await names()).toEqual(["achromat_recall", "achromat_register_identity"]);
+    expect(controller.active().sort()).toEqual(["achromat_recall", "achromat_register_identity"]);
   });
 
-  it("offers only recall and calibrate once a key file exists", async () => {
+  it("offers recall and calibrate, and no registration, once a key file exists", async () => {
     const { names, controller } = await boot({ keyExists: () => true });
     expect(await names()).toEqual(["achromat_calibrate", "achromat_recall"]);
     expect(controller.active().sort()).toEqual(["achromat_calibrate", "achromat_recall"]);
   });
 
-  it("refuses to run a tool that is not offered", async () => {
+  it("keeps calibrate gated behind registration: it is not listed, and a call to it sends nothing", async () => {
     const withoutKey = await boot();
-    const recall = await withoutKey.client.callTool({ name: "achromat_recall", arguments: { domain: "fintech", tool_name: "dispatch_wire", task_description: TASK, arguments: { a: 1 } } }).catch((error: Error) => ({ isError: true, content: [{ text: error.message }] }));
-    expect((recall as { isError?: boolean }).isError).toBe(true);
-    expect(text(recall)).toMatch(/disabled/i);
+    const calibrate = await withoutKey.client.callTool({ name: "achromat_calibrate", arguments: { domain: "fintech", tool_name: "dispatch_wire", task_description: TASK, arguments: { a: 1 } } }).catch((error: Error) => ({ isError: true, content: [{ text: error.message }] }));
+    expect((calibrate as { isError?: boolean }).isError).toBe(true);
+    expect(text(calibrate)).toMatch(/disabled/i);
     expect(withoutKey.momService.calls).toHaveLength(0);
-
+  });
+  it("answers a recall from the very first call, with no key file, by sending it without any Achromat-* header", async () => {
+    const { client, momService, keyFile } = await boot();
+    const result = await client.callTool({ name: "achromat_recall", arguments: { domain: "fintech", tool_name: "dispatch_wire", task_description: TASK, arguments: { a: 1 } } });
+    expect(result.isError).toBe(false);
+    expect(text(result)).toContain("NO MATCH");
+    expect(momService.calls).toHaveLength(1);
+    const seen = momService.calls[0]!;
+    expect(seen.signed).toBe(false);
+    expect([...seen.headers.keys()].filter((name) => name.toLowerCase().startsWith("achromat-"))).toEqual([]);
+    expect(existsSync(keyFile)).toBe(false); // recall created nothing on the machine
+  });
+  it("refuses to run registration once a key exists, and sends nothing", async () => {
     const withKey = await boot({ keyExists: () => true });
     const register = await withKey.client.callTool({ name: "achromat_register_identity", arguments: { user_confirmed: true } }).catch((error: Error) => ({ isError: true, content: [{ text: error.message }] }));
     expect(text(register)).toMatch(/disabled/i);
@@ -65,16 +78,16 @@ describe("which tools are offered", () => {
   it("follows the file when refresh() is called", async () => {
     let present = false;
     const { names, controller, changed } = await boot({ keyExists: () => present });
-    expect(await names()).toEqual(["achromat_register_identity"]);
+    expect(await names()).toEqual(["achromat_recall", "achromat_register_identity"]);
     present = true;
     controller.refresh();
     expect(await names()).toEqual(["achromat_calibrate", "achromat_recall"]);
     await vi.waitFor(() => expect(changed).toHaveBeenCalled());
     present = false;
     controller.refresh();
-    expect(await names()).toEqual(["achromat_register_identity"]);
+    expect(await names()).toEqual(["achromat_recall", "achromat_register_identity"]);
     controller.refresh(); // idempotent
-    expect(await names()).toEqual(["achromat_register_identity"]);
+    expect(await names()).toEqual(["achromat_recall", "achromat_register_identity"]);
   });
 });
 
@@ -98,9 +111,9 @@ describe("achromat_register_identity", () => {
     expect(existsSync(keyFile)).toBe(false);
   });
 
-  it("registers, saves the key, and switches the host to recall and calibrate", async () => {
+  it("registers, saves the key, and switches the host from registration to calibrate (recall stays)", async () => {
     const { client, names, keyFile, registrar, changed } = await boot();
-    expect(await names()).toEqual(["achromat_register_identity"]);
+    expect(await names()).toEqual(["achromat_recall", "achromat_register_identity"]);
 
     const result = await client.callTool({ name: "achromat_register_identity", arguments: { user_confirmed: true } });
     expect(result.isError).toBe(false);
@@ -116,14 +129,22 @@ describe("achromat_register_identity", () => {
     await vi.waitFor(() => expect(changed).toHaveBeenCalled()); // the host is told the list changed
   });
 
-  it("makes the new key usable straight away, with no restart", async () => {
+  it("starts signing recall straight away after registering, with no restart, and never sends half a signature", async () => {
     const { client, momService, registrar } = await boot();
+    const recall = () => client.callTool({ name: "achromat_recall", arguments: { domain: "fintech", tool_name: "dispatch_wire", task_description: TASK, arguments: { amount_usd: 1 } } });
+    // Before the identity exists: unsigned.
+    expect((await recall()).isError).toBe(false);
+    expect(momService.calls[0]!.signed).toBe(false);
+    // Register, then ask again: the same tool now signs, with all four headers.
     await client.callTool({ name: "achromat_register_identity", arguments: { user_confirmed: true } });
     const [publicKey] = [...registrar.keys];
-    const result = await client.callTool({ name: "achromat_recall", arguments: { domain: "fintech", tool_name: "dispatch_wire", task_description: TASK, arguments: { amount_usd: 1 } } });
+    const result = await recall();
     expect(result.isError).toBe(false);
     expect(text(result)).toContain("NO MATCH");
-    expect(momService.calls[0]!.headers.get("Achromat-Agent-Key")).toBe(publicKey);
+    const signed = momService.calls[1]!;
+    expect(signed.signed).toBe(true);
+    expect(signed.headers.get("Achromat-Agent-Key")).toBe(publicKey);
+    for (const name of ["Achromat-Timestamp", "Achromat-Nonce", "Achromat-Signature"]) expect(signed.headers.get(name), name).not.toBeNull();
   });
 
   it("reports a failure, leaves the tool set alone, and can be tried again", async () => {
@@ -133,7 +154,7 @@ describe("achromat_register_identity", () => {
     expect(text(result)).toContain("Wait 20 seconds");
     expect(text(result)).toContain("nothing was created");
     expect(existsSync(keyFile)).toBe(false);
-    expect(await names()).toEqual(["achromat_register_identity"]);
+    expect(await names()).toEqual(["achromat_recall", "achromat_register_identity"]);
   });
 
   it("runs only one registration when asked twice at once, and creates one identity", async () => {

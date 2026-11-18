@@ -2,7 +2,7 @@
 
 An [MCP](https://modelcontextprotocol.io) server that lets any MCP host (Claude Desktop, an IDE, an agent framework) use [Achromat Machine Operational Memory (MOM)](https://achromat.ai) as native tools. MOM keeps verified memory of tool calls that policy blocked and the corrected calls that were then allowed. With this server your agent can ask for the compliant version of a call **before** it acts, and check a call against live policy, without you writing any integration code.
 
-The server runs on your machine as a child process of the host and talks to it over stdio. It signs every request to MOM with an Ed25519 key that stays on your machine: only signatures leave it, never the key.
+The server runs on your machine as a child process of the host and talks to it over stdio. **`achromat_recall` works straight away, with no setup and no identity**: it searches the public, approved lessons. Everything that writes, `achromat_calibrate`, needs an identity: the server signs those requests with an Ed25519 key that stays on your machine, so only signatures leave it, never the key.
 
 ## Add it to Claude Desktop
 
@@ -28,16 +28,16 @@ Add the server under `mcpServers`, then restart Claude Desktop:
 
 That is the whole setup. Requires Node.js 20 or newer; `-y` lets `npx` install the package without asking. Other MCP hosts take the same command and arguments in their own configuration.
 
-## First use: your agent sets up the identity
+## When you need an identity
 
-Every request to MOM is signed, so the server needs a key that MOM knows. You do not create or register one yourself. The first time you use the server it has no key, so it offers a single tool, `achromat_register_identity`, and your agent will **ask you** whether to set up an identity. If you say yes, the server:
+`achromat_recall` needs no key. `achromat_calibrate` (checking a call against live policy, which is also how new lessons are made) does, and so does seeing your own not-yet-published lessons. You do not create or register a key yourself. While there is no key file the server offers `achromat_recall` and `achromat_register_identity`, and your agent will **ask you** before it uses the second. If you say yes, the server:
 
 1. generates an Ed25519 key pair on your machine,
 2. does a short proof of work (about a second; it is how MOM limits automated sign-ups),
 3. registers the **public** key with MOM, and
 4. saves the **private** key to `~/.achromat/achromat_agent_key.pem`, readable only by you.
 
-Then `achromat_recall` and `achromat_calibrate` appear in place of the registration tool. If your host does not refresh its tool list by itself, restart it once.
+Then `achromat_calibrate` appears in place of the registration tool, and `achromat_recall` starts signing its requests. If your host does not refresh its tool list by itself, restart it once.
 
 What leaves your machine: the public key, the proof of work, and a signature proving you hold the private key. The private key never does. MOM keeps a record of the registration and limits it to 10 a day per network.
 
@@ -81,7 +81,7 @@ If you share a link or a setup snippet and want to know which one brought an ins
 }
 ```
 
-The tag is sent only while the server registers its identity, as `?ref=launch-post` on the two registration calls, and nowhere else. It is the label itself and nothing about you or your machine. A tag that does not fit the rule is ignored; it never stops the registration.
+The tag is sent as `?ref=launch-post` on the two registration calls, and on a recall made without an identity (so the service can tell which link brought the install), and nowhere else. It is the label itself and nothing about you or your machine. A tag that does not fit the rule is ignored; it never stops a registration or a recall.
 
 ## Run from source
 
@@ -115,7 +115,7 @@ npm run inspect
 
 ### `achromat_register_identity`
 
-Offered only while there is no key file. Creates and registers an identity as described above. It requires `user_confirmed: true`, which the agent may set only after you have agreed; the tool description tells it to ask first.
+Offered only while there is no key file. Creates and registers an identity as described above. Recall does not need it. It requires `user_confirmed: true`, which the agent may set only after you have agreed; the tool description tells it to ask first.
 
 | Parameter | Required | Description |
 | --- | --- | --- |
@@ -124,6 +124,10 @@ Offered only while there is no key file. Creates and registers an identity as de
 ### `achromat_recall`
 
 Call this **before** running a tool that policy might block (payments, credit decisions, robot or plant commands, shell, SQL, web requests). It asks whether a verified compliant version of the call already exists. On a match you get `compliant_arguments`, a `steering_directive` and the rule that applied. Use the whole `compliant_arguments` object as your template, keep any `[VERIFIED_STATE]` placeholders exactly as written, and change only your own operational values.
+
+**With or without an identity.** Without a key file the request is sent unsigned and the service answers it as an anonymous caller: only public, approved lessons, no receipts, and at most 30 requests a minute per network. With a key file the request is signed, and it also finds your own pending lessons. A key file that exists but cannot be used is reported as an error; the server never falls back to an unsigned request because of a broken key.
+
+**Coverage.** Matching is exact on `domain` and `tool_name`. Lessons exist for: `fintech`: `dispatch_wire`, `issue_credit_adverse_action`; `industrial_iot`: `dispatch_manipulation`, `mutate_safety_parameter`, `adjust_plc_setpoint`; `devsecops`: `execute_command`, `run_sql_statement`, `http_request`, `run_pipeline_job`, `read_file`, `monitor_logs`, `modify_iam_policy`, `process_retrieved_content`. Use `industrial_iot` for robot and plant commands (the `robotics` domain has no lessons yet). Any other tool name, such as `bash` or `postgres_query`, returns no match. The same list is in the tool description, so your agent passes a name that can match.
 
 When the lesson is an approved one, the answer ends with a **citation line**: `Tool arguments follow a verified Achromat MOM lesson: https://achromat.ai/?ref=audit#lesson-<id>`. The agent is told to add it to text a person reads (its final answer, a pull request description, a commit message), never to the tool's arguments, and to skip it if you ask for no attribution. The link opens that lesson on the Achromat site. A lesson that is only your own, not yet shared, gets no citation.
 
@@ -158,9 +162,9 @@ Lesson text (rules, directives, arguments) comes from the community. The server 
 | --- | --- | --- |
 | `ACHROMAT_AGENT_KEY_FILE` | `~/.achromat/achromat_agent_key.pem` | Where the agent's Ed25519 private key is, or will be created. |
 | `ACHROMAT_BASE_URL` | `https://achromat.ai` | The service origin. Must be `https` (plain `http` only for `localhost`). |
-| `ACHROMAT_REF` | none | Optional attribution tag (see above), sent only while registering. An invalid tag is ignored. |
+| `ACHROMAT_REF` | none | Optional attribution tag (see above), sent while registering and on a recall made without an identity. An invalid tag is ignored. |
 
-Whether the key file exists decides which tools are offered, and it is checked at startup and right after a registration. If you delete, move or replace the key file while the host is running, restart the host. The key itself is read on the first tool call, so a wrong key never makes the server disappear from your host: the tool call returns a message saying what to fix.
+`achromat_recall` is always offered. Whether the key file exists decides whether `achromat_calibrate` or `achromat_register_identity` is offered with it, and it is checked at startup and right after a registration. If you delete, move or replace the key file while the host is running, restart the host. The key itself is read on the first tool call, so a wrong key never makes the server disappear from your host: the tool call returns a message saying what to fix.
 
 ## When something goes wrong
 
@@ -168,7 +172,7 @@ Every failure comes back to the agent as a readable tool result, with the next s
 
 | What you see | Cause and fix |
 | --- | --- |
-| Only `achromat_register_identity` is listed | There is no key file yet. That is the normal first state. Say yes when your agent asks. |
+| `achromat_calibrate` is not listed | There is no key file yet, which is normal: recall works without one. Say yes when your agent asks to create an identity if you want to check calls against live policy. |
 | `A key file already exists at …` | An identity is already set up there. To start over, move or delete the file and restart the host. |
 | `The key could not be saved at …` | The folder is not writable. Fix its permissions or set `ACHROMAT_AGENT_KEY_FILE`. Nothing was registered. |
 | `Too many registration requests` / `registration limit` | MOM limits sign-ups per network (10 a day). Wait, or try from another network. Nothing was created. |
@@ -179,7 +183,7 @@ Every failure comes back to the agent as a readable tool result, with the next s
 | `AGENT_KEY_UNKNOWN` (401) | A key file exists but MOM does not know it. Move or delete the file and restart the host to create a new identity. |
 | `AGENT_KEY_INACTIVE` (403) | The key was revoked or rotated. Move or delete the file and restart the host. |
 | `AGENT_SIGNATURE_EXPIRED` (401) | Your clock is more than 60 seconds off. The server corrects for this by itself using the service's clock; if it still fails, check your system time. |
-| `Rate limited` (429) | Recall allows 240 an hour per key and 50 distinct lessons a day; calibrate allows 120 an hour. Wait for the time given. |
+| `Rate limited` (429) | Recall with a key allows 240 an hour and 50 distinct lessons a day; recall without one allows 30 a minute per network; calibrate allows 120 an hour. Wait for the time given. |
 | `HTTP 400 INVALID_REQUEST` | The service lists the offending fields. Often a credential or personal data in the text or arguments. |
 
 Server logs go to stderr, which hosts write to their own MCP log files (Claude Desktop keeps them in its logs folder; on macOS that is under `~/Library/Logs/Claude/`). The server never logs keys, signatures or request contents.

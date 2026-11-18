@@ -18,6 +18,8 @@ export interface Seen {
   body: string;
   nonce: string;
   timestamp: number;
+  /** False for a request that carried no Achromat-* header (only possible with optionalSignature). */
+  signed: boolean;
 }
 
 export interface FakeServiceOptions {
@@ -31,6 +33,12 @@ export interface FakeServiceOptions {
   omitDate?: boolean;
   /** Reject every request for clock skew, whatever it carries. */
   alwaysExpired?: boolean;
+  /**
+   * Behave like the deployed service for POST /api/v1/recall: a request with NO Achromat-* header at all is answered as an
+   * anonymous caller (`seen.signed` is false); a request with ANY such header still gets the full check below. Unset: every
+   * request must be signed, as on a service that predates keyless recall.
+   */
+  optionalSignature?: boolean;
 }
 
 /**
@@ -56,6 +64,13 @@ export function fakeService(options: FakeServiceOptions = {}) {
     const body = init?.body == null ? "" : Buffer.from(init.body as Uint8Array).toString("utf8");
     const bodyBytes = init?.body == null ? new Uint8Array(0) : (init.body as Uint8Array);
 
+    const hasAchromatHeader = [...headers.keys()].some((name) => name.toLowerCase().startsWith("achromat-"));
+    if (options.optionalSignature && !hasAchromatHeader && url.pathname === "/api/v1/recall") {
+      const seen: Seen = { url: url.href, method: init?.method ?? "GET", headers, body, nonce: "", timestamp: 0, signed: false };
+      calls.push(seen);
+      const answer = options.respond?.(seen) ?? { status: 200, body: { success: true, match: false } };
+      return json(answer.status, answer.body ?? {}, answer.headers ?? {});
+    }
     const agentKey = headers.get("Achromat-Agent-Key");
     const timestamp = headers.get("Achromat-Timestamp");
     const nonce = headers.get("Achromat-Nonce");
@@ -76,7 +91,7 @@ export function fakeService(options: FakeServiceOptions = {}) {
     if (nonces.has(nonce)) return reject(401, "AGENT_NONCE_REPLAYED", "nonce replayed");
     nonces.add(nonce);
 
-    const seen: Seen = { url: url.href, method: init?.method ?? "GET", headers, body, nonce, timestamp: Number(timestamp) };
+    const seen: Seen = { url: url.href, method: init?.method ?? "GET", headers, body, nonce, timestamp: Number(timestamp), signed: true };
     calls.push(seen);
     const answer = options.respond?.(seen) ?? { status: 200, body: { success: true } };
     return json(answer.status, answer.body ?? {}, answer.headers ?? {});

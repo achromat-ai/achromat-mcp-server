@@ -255,3 +255,103 @@ describe("failures a tool call can run into", () => {
     }
   });
 });
+
+describe("postOptionallySigned (recall without an identity)", () => {
+  const absent = () => {
+    throw new KeyFileError("NOT_FOUND", "No agent key found at /nowhere/key.pem.");
+  };
+  const keyless = (service: ReturnType<typeof fakeService>, extra: ConstructorParameters<typeof MomClient>[1] = {}, cfg: { baseUrl: string; keyFile: string; ref?: string } = config) =>
+    new MomClient(cfg, { fetch: service.fetch, loadKey: absent, ...extra });
+
+  it("sends no Achromat-* header at all when there is no key file, and says the answer was unsigned", async () => {
+    const service = fakeService({ optionalSignature: true });
+    const result = await keyless(service).postOptionallySigned("/api/v1/recall", PAYLOAD);
+    expect(result).toMatchObject({ kind: "response", status: 200, signed: false });
+    const seen = service.calls[0]!;
+    expect(seen.signed).toBe(false);
+    expect([...seen.headers.keys()].filter((name) => name.toLowerCase().startsWith("achromat-"))).toEqual([]);
+    expect(seen.headers.get("Content-Type")).toBe("application/json");
+    expect(JSON.parse(seen.body)).toEqual(PAYLOAD);
+    expect(seen.url).toBe(`${BASE_URL}/api/v1/recall`);
+  });
+
+  it("still refuses redirects, sends the User-Agent, and honours the timeout when unsigned", async () => {
+    const fetchSpy = vi.fn(async (_url: unknown, _init?: RequestInit) => new Response("{}", { status: 200 }));
+    await keyless(fakeService(), { fetch: fetchSpy as unknown as typeof fetch, userAgent: "achromat-mcp-server/0.1.5" }).postOptionallySigned("/api/v1/recall", PAYLOAD);
+    const init = fetchSpy.mock.calls[0]![1] as RequestInit;
+    expect(init).toMatchObject({ redirect: "error", method: "POST" });
+    expect((init.headers as Record<string, string>)["User-Agent"]).toBe("achromat-mcp-server/0.1.5");
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("adds ?ref= from ACHROMAT_REF to an unsigned request only, and only when it is valid", async () => {
+    const withRef = fakeService({ optionalSignature: true });
+    await keyless(withRef, {}, { ...config, ref: "launch-post" }).postOptionallySigned("/api/v1/recall", PAYLOAD);
+    expect(withRef.calls[0]!.url).toBe(`${BASE_URL}/api/v1/recall?ref=launch-post`);
+    for (const bad of ["", "Not A Slug!", "x".repeat(40), "a/b"]) {
+      const service = fakeService({ optionalSignature: true });
+      await keyless(service, {}, { ...config, ref: bad }).postOptionallySigned("/api/v1/recall", PAYLOAD);
+      expect(service.calls[0]!.url, JSON.stringify(bad)).toBe(`${BASE_URL}/api/v1/recall`);
+    }
+    // A signed request never carries it (its path and query are part of what is signed).
+    const signedService = fakeService();
+    const key = freshKey();
+    await new MomClient({ ...config, ref: "launch-post" }, { fetch: signedService.fetch, loadKey: () => loaded(key) }).postOptionallySigned("/api/v1/recall", PAYLOAD);
+    expect(signedService.calls[0]!.url).toBe(`${BASE_URL}/api/v1/recall`);
+    expect(signedService.calls[0]!.signed).toBe(true);
+  });
+
+  it("signs, with all four headers, as soon as a key file exists", async () => {
+    const service = fakeService({ optionalSignature: true });
+    const key = freshKey();
+    let present = false;
+    const c = new MomClient(config, {
+      fetch: service.fetch,
+      loadKey: () => {
+        if (!present) throw new KeyFileError("NOT_FOUND", "none");
+        return loaded(key);
+      },
+    });
+    expect(await c.postOptionallySigned("/api/v1/recall", PAYLOAD)).toMatchObject({ signed: false });
+    present = true;
+    expect(await c.postOptionallySigned("/api/v1/recall", PAYLOAD)).toMatchObject({ signed: true, status: 200 });
+    const [unsigned, signed] = service.calls;
+    expect(unsigned!.signed).toBe(false);
+    expect(signed!.signed).toBe(true);
+    for (const name of ["Achromat-Agent-Key", "Achromat-Timestamp", "Achromat-Nonce", "Achromat-Signature"]) expect(signed!.headers.get(name), name).not.toBeNull();
+  });
+
+  it("does NOT fall back to unsigned for a key that exists but cannot be used", async () => {
+    for (const [problem, code] of [["UNREADABLE", "KEY_UNREADABLE"], ["INVALID", "KEY_INVALID"], ["ENCRYPTED", "KEY_INVALID"], ["WRONG_TYPE", "KEY_INVALID"]] as const) {
+      const service = fakeService({ optionalSignature: true });
+      const c = keyless(service, {
+        loadKey: () => {
+          throw new KeyFileError(problem, "explained");
+        },
+      });
+      expect(await c.postOptionallySigned("/api/v1/recall", PAYLOAD), problem).toEqual({ kind: "local", code, message: "explained" });
+      expect(service.calls, problem).toHaveLength(0);
+    }
+  });
+
+  it("does not hide a bug that is not a key problem, even on the unsigned path", async () => {
+    const c = keyless(fakeService(), {
+      loadKey: () => {
+        throw new TypeError("programming error");
+      },
+    });
+    await expect(c.postOptionallySigned("/api/v1/recall", PAYLOAD)).rejects.toThrow("programming error");
+  });
+
+  it("leaves post() strictly signed: with no key file it sends nothing", async () => {
+    const service = fakeService({ optionalSignature: true });
+    expect(await keyless(service).post("/api/v1/calibrate", PAYLOAD)).toEqual({ kind: "local", code: "KEY_NOT_FOUND", message: "No agent key found at /nowhere/key.pem." });
+    expect(service.calls).toHaveLength(0);
+  });
+
+  it("does not retry an unsigned request for a clock problem it cannot have", async () => {
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ success: false, code: "AGENT_SIGNATURE_EXPIRED" }), { status: 401, headers: { "Content-Type": "application/json", Date: new Date().toUTCString() } }));
+    await keyless(fakeService(), { fetch: fetchSpy as unknown as typeof fetch }).postOptionallySigned("/api/v1/recall", PAYLOAD);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});

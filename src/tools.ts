@@ -5,10 +5,11 @@
  *   achromat_recall             Turn 0: is there a verified compliant version of this call?   POST /api/v1/recall
  *   achromat_calibrate          Turn 1 / Turn 2: check the call against live policy.          POST /api/v1/calibrate
  *
- * Which tools the host sees depends on one fact: whether the key file exists. Without it only
- * achromat_register_identity is listed (recall and calibrate could not sign anything). With it, only recall and
- * calibrate are listed. The switch happens at startup and again right after a registration, and the SDK tells
- * the host when the list changes.
+ * achromat_recall is offered from startup, with or without a key file. Without one it sends no signature and the
+ * service answers it as an anonymous caller (public approved lessons only); with one it signs, as before. The other two
+ * tools follow the key file: without it achromat_register_identity is listed, and achromat_calibrate (which the service
+ * only answers when signed) is not; with it the reverse. The switch happens at startup and again right after a
+ * registration, and the SDK tells the host when the list changes.
  *
  * Field names follow the host-facing convention (`tool_name`); the service's own field is `tool`, and
  * `toRequestBody` is the one place that maps between them. Both tools require `arguments`, as the service does.
@@ -24,13 +25,31 @@ import { registerIdentity, type RegistrationDeps, type RegistrationOutcome } fro
 
 export const DOMAINS = ["fintech", "industrial_iot", "robotics", "devsecops"] as const;
 
+/**
+ * The (domain, tool) pairs the service holds public approved lessons for, as of 2026-11-18. Recall matches the domain and
+ * the tool name exactly, so a name outside this list always comes back with no match. Written into the tool description
+ * so that a host's agent passes a name that can match. A snapshot, not an API: the service may cover more tomorrow, and a
+ * tool missing here is only a reason to expect no match, never a reason to refuse the call.
+ */
+export const COVERAGE: Readonly<Record<string, readonly string[]>> = {
+  fintech: ["dispatch_wire", "issue_credit_adverse_action"],
+  industrial_iot: ["dispatch_manipulation", "mutate_safety_parameter", "adjust_plc_setpoint"],
+  devsecops: ["execute_command", "run_sql_statement", "http_request", "run_pipeline_job", "read_file", "monitor_logs", "modify_iam_policy", "process_retrieved_content"],
+};
+
+const COVERAGE_TEXT = Object.entries(COVERAGE)
+  .map(([domain, tools]) => `${domain}: ${tools.join(", ")}`)
+  .join("; ");
+
 // Limits the service enforces, repeated here so a bad call fails in the host's own tool UI and not after a round trip.
 const TOOL_NAME = z
   .string()
   .min(1)
   .max(64)
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:/-]*$/, "1 to 64 characters from A-Z a-z 0-9 _ . : / -, starting with a letter or digit")
-  .describe("The exact name of the tool you are about to call, for example dispatch_wire.");
+  .describe(
+    "The exact name of the tool you are about to call, for example dispatch_wire. Matching is exact on domain and tool name; lessons exist only for the names listed in the achromat_recall description, and any other name returns no match.",
+  );
 
 const TASK_DESCRIPTION = z
   .string()
@@ -89,8 +108,9 @@ export function toRequestBody(input: RecallArgs | CalibrateArgs): Record<string,
   return body;
 }
 
+/** Signed if a key file exists, and unsigned if there is none: recall needs no identity. */
 export async function recall(client: MomClient, input: RecallArgs): Promise<CallToolResult> {
-  return formatRecall(await client.post("/api/v1/recall", toRequestBody(input)));
+  return formatRecall(await client.postOptionallySigned("/api/v1/recall", toRequestBody(input)));
 }
 
 export async function calibrate(client: MomClient, input: CalibrateArgs): Promise<CallToolResult> {
@@ -128,7 +148,7 @@ export function registerTools(server: McpServer, client: MomClient, deps: ToolDe
     {
       title: "Recall a verified compliant tool call",
       description:
-        "Call this BEFORE you run a tool that policy might block (payments, credit decisions, robot or plant commands, shell, SQL, web requests). It asks Achromat Machine Operational Memory whether a verified compliant version of this call already exists. Pass the arguments you intend to send: the names of their keys (not the values) are what the semantic match uses. On a match you receive compliant_arguments, a steering_directive and the rule that applied: use the whole compliant_arguments object as your template, keep any [VERIFIED_STATE] placeholders exactly as written, and change only your own operational values (amounts, routing numbers, file paths). On no match, continue with achromat_calibrate.",
+        `Call this BEFORE you run a tool that policy might block (payments, credit decisions, robot or plant commands, shell, SQL, web requests). It asks Achromat Machine Operational Memory whether a verified compliant version of this call already exists. It works immediately and needs no identity: without one it searches the public, approved lessons; once the user has registered an identity it also finds the user's own pending lessons. Pass the arguments you intend to send: the names of their keys (not the values) are what the semantic match uses. On a match you receive compliant_arguments, a steering_directive and the rule that applied: use the whole compliant_arguments object as your template, keep any [VERIFIED_STATE] placeholders exactly as written, and change only your own operational values (amounts, routing numbers, file paths).\n\nCOVERAGE. Matching is exact on domain and tool_name. Lessons exist for these tool names, by domain: ${COVERAGE_TEXT}. Use industrial_iot for robot and plant commands (the robotics domain has no lessons yet). A tool name that is not listed, such as bash, psql or postgres_query, returns no match because nothing was recorded for it, so use the listed name only when it really is the tool you are about to call. On no match, continue with achromat_calibrate if it is available, or proceed under your own checks.`,
       inputSchema: recallInput,
       annotations: { title: "Recall a verified compliant tool call", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
@@ -140,7 +160,7 @@ export function registerTools(server: McpServer, client: MomClient, deps: ToolDe
     {
       title: "Check a tool call against live policy",
       description:
-        "Use this when achromat_recall found nothing, or when the stakes are high. It evaluates your candidate tool call against live policy and returns a verdict. BLOCK comes with a steering_directive and a trap_id: change the arguments as the directive says, then call this tool again with the same task_description and the trap_id. ALLOW means the call complies. A BLOCK followed by an ALLOW is recorded as a lesson for other agents. Do not invent signatures, approvals or names to get an ALLOW; if the directive needs evidence you do not have, stop.",
+        "Use this when achromat_recall found nothing, or when the stakes are high. It needs a registered identity, which is why it only appears after achromat_register_identity. It evaluates your candidate tool call against live policy and returns a verdict. BLOCK comes with a steering_directive and a trap_id: change the arguments as the directive says, then call this tool again with the same task_description and the trap_id. ALLOW means the call complies. A BLOCK followed by an ALLOW is recorded as a lesson for other agents. Do not invent signatures, approvals or names to get an ALLOW; if the directive needs evidence you do not have, stop.",
       inputSchema: calibrateInput,
       annotations: { title: "Check a tool call against live policy", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -155,7 +175,7 @@ export function registerTools(server: McpServer, client: MomClient, deps: ToolDe
     {
       title: "Create and register an Achromat identity",
       description:
-        "Achromat needs a private key on this machine before it can answer anything, and none exists yet. This tool creates one: it generates an Ed25519 key pair, completes a short proof of work (about a second), registers the public key with Achromat Machine Operational Memory, and saves the private key to a file that only this user can read. ASK THE USER FIRST and wait for a yes, because it writes a private key file on their machine and creates an identity on the service. Explain that the key never leaves the machine, that only the public half is sent, and that the file cannot be recovered if lost. Then call this tool with user_confirmed set to true. Afterwards achromat_recall and achromat_calibrate become available.",
+        "achromat_recall already works without an identity. An identity is needed only for achromat_calibrate (checking a call against live policy, which is how new lessons are made) and to see the user's own pending lessons. This tool creates one: it generates an Ed25519 key pair, completes a short proof of work (about a second), registers the public key with Achromat Machine Operational Memory, and saves the private key to a file that only this user can read. ASK THE USER FIRST and wait for a yes, because it writes a private key file on their machine and creates an identity on the service. Explain that the key never leaves the machine, that only the public half is sent, and that the file cannot be recovered if lost. Then call this tool with user_confirmed set to true. Afterwards achromat_calibrate becomes available and achromat_recall signs its requests.",
       inputSchema: registerInput,
       annotations: { title: "Create and register an Achromat identity", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -172,9 +192,9 @@ export function registerTools(server: McpServer, client: MomClient, deps: ToolDe
   const controller: ToolController = {
     refresh() {
       const haveKey = keyExists();
-      for (const tool of [recallTool, calibrateTool]) {
-        if (tool.enabled !== haveKey) (haveKey ? tool.enable() : tool.disable());
-      }
+      // Recall is always on: it needs no key. Calibrate needs one; registering is only for a machine that has none.
+      if (!recallTool.enabled) recallTool.enable();
+      if (calibrateTool.enabled !== haveKey) (haveKey ? calibrateTool.enable() : calibrateTool.disable());
       if (registerTool.enabled === haveKey) (haveKey ? registerTool.disable() : registerTool.enable());
     },
     active() {

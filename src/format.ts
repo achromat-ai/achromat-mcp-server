@@ -143,13 +143,30 @@ export function citationLine(lesson: Record<string, unknown>): string | null {
 }
 
 const RECALL_LIMITS = "At most 240 recalls per hour per key, and 50 distinct lessons per day.";
+const RECALL_LIMITS_UNSIGNED = "Without an identity, at most 30 recalls per minute per network. An identity (achromat_register_identity, after asking the user) has its own, higher limits.";
 
 export function formatRecall(outcome: ApiResult): CallToolResult {
-  if (outcome.kind !== "response" || outcome.status !== 200) return describeFailure(outcome, "recall", RECALL_LIMITS);
+  // true only for a request that really went out with no signature (no key file on this machine).
+  const unsigned = outcome.kind === "response" && !outcome.signed;
+  if (unsigned && outcome.kind === "response" && outcome.status === 401) {
+    // A service that predates keyless recall answers an unsigned request with 401. Say what can be done about it.
+    return result(true, [
+      `This service version does not answer recall without an identity (HTTP 401${errorCode(outcome.body) ? `, ${errorCode(outcome.body)}` : ""}).`,
+      "Ask the user whether to create an identity. If they agree, call achromat_register_identity, then call achromat_recall again.",
+    ]);
+  }
+  if (outcome.kind !== "response" || outcome.status !== 200) return describeFailure(outcome, "recall", unsigned ? RECALL_LIMITS_UNSIGNED : RECALL_LIMITS);
   const body = outcome.body;
   if (!isRecord(body) || body.success !== true || typeof body.match !== "boolean") return unreadable("recall");
 
   if (!body.match) {
+    if (unsigned) {
+      return result(false, [
+        "NO MATCH: no verified compliant version of this call is known among the public lessons.",
+        "Matching is exact on domain and tool_name, so a tool that has no recorded lessons always comes back empty: the achromat_recall description lists the names that have them.",
+        "Next step: carry on under your own checks. To check this call against live policy (which is also how new lessons are made) an identity is needed: ask the user, and only if they agree call achromat_register_identity, then achromat_calibrate.",
+      ]);
+    }
     return result(false, [
       body.budget_exhausted === true
         ? "NO MATCH: this key has used its daily allowance of 50 distinct lessons, so nothing more can be recalled today."
@@ -173,7 +190,10 @@ export function formatRecall(outcome: ApiResult): CallToolResult {
     lines.push(`For information, the fix differed from the blocked call at: ${lesson.changed_paths.filter((p) => typeof p === "string").join(", ")}. Do not patch your arguments with this list.`);
   }
   lines.push(
-    "How to use it: adopt the whole compliant_arguments object as your template. Keep every [VERIFIED_STATE] or [PLACEHOLDER_CREDENTIAL] placeholder exactly as written; each stands for evidence your own system or a person must supply. Overwrite only your operational values (amounts, routing numbers, file paths). If you cannot supply what a placeholder stands for, do not run the tool. If the stakes are high, confirm with achromat_calibrate first.",
+    "How to use it: adopt the whole compliant_arguments object as your template. Keep every [VERIFIED_STATE] or [PLACEHOLDER_CREDENTIAL] placeholder exactly as written; each stands for evidence your own system or a person must supply. Overwrite only your operational values (amounts, routing numbers, file paths). If you cannot supply what a placeholder stands for, do not run the tool. " +
+      (unsigned
+        ? "If the stakes are high, tell the user: checking the call against live policy needs an identity, which they can create with achromat_register_identity."
+        : "If the stakes are high, confirm with achromat_calibrate first."),
   );
   const citation = citationLine(lesson);
   if (citation !== null) {
@@ -274,6 +294,6 @@ export function formatRegistration(outcome: RegistrationOutcome): CallToolResult
     ...(outcome.role ? [`Role: ${outcome.role}`] : []),
     `Proof of work: ${outcome.pow.attempts.toLocaleString("en-US")} attempts in ${seconds} s.`,
     "",
-    "achromat_recall and achromat_calibrate are available now. Use achromat_recall before you run a tool that policy might block. If your host does not show the new tools, ask the user to restart it.",
+    "achromat_calibrate is available now, and achromat_recall will sign its requests from now on (it also finds this key's own pending lessons). Use achromat_recall before you run a tool that policy might block. If your host does not show the new tool, ask the user to restart it.",
   ]);
 }

@@ -5,7 +5,8 @@
  * MCP over stdio.
  *
  * stdout is the protocol channel. Nothing else may be written to it, so every log line goes to stderr.
- * Whether the key file exists decides which tools are offered (src/tools.ts). The key itself is read on the first
+ * achromat_recall is offered from the start; whether the key file exists decides whether achromat_calibrate or
+ * achromat_register_identity is offered with it (src/tools.ts). The key itself is read on the first
  * tool call, not at startup: a missing or unreadable key then comes back as a tool result the agent can relay,
  * instead of a dead process the host can only call "disconnected".
  */
@@ -26,7 +27,7 @@ async function main(): Promise<void> {
 
   await server.connect(new StdioServerTransport());
   console.error(`achromat-mcp-server ${version} ready on stdio (service: ${config.baseUrl}, key: ${config.keyFile})`);
-  console.error(`achromat-mcp-server: ${tools.active().includes("achromat_register_identity") ? "no key file yet, so only achromat_register_identity is offered" : "key file found, offering achromat_recall and achromat_calibrate"}`);
+  console.error(`achromat-mcp-server: ${tools.active().includes("achromat_register_identity") ? "no key file yet: offering achromat_recall (unsigned) and achromat_register_identity" : "key file found: offering achromat_recall (signed) and achromat_calibrate"}`);
 }
 
 main().catch((error: unknown) => {
