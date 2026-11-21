@@ -23,18 +23,20 @@ import type { Config } from "./config.js";
 import { formatCalibrate, formatRecall, formatRegistration } from "./format.js";
 import { registerIdentity, type RegistrationDeps, type RegistrationOutcome } from "./registration.js";
 
-export const DOMAINS = ["fintech", "industrial_iot", "robotics", "devsecops"] as const;
+export const DOMAINS = ["fintech", "industrial_iot", "devsecops", "contractual_eligibility", "compliance_provenance"] as const;
 
 /**
- * The (domain, tool) pairs the service holds public approved lessons for, as of 2026-11-18. Recall matches the domain and
+ * The (domain, tool) pairs the service holds public approved lessons for, as of 2026-11-21. Recall matches the domain and
  * the tool name exactly, so a name outside this list always comes back with no match. Written into the tool description
  * so that a host's agent passes a name that can match. A snapshot, not an API: the service may cover more tomorrow, and a
  * tool missing here is only a reason to expect no match, never a reason to refuse the call.
  */
 export const COVERAGE: Readonly<Record<string, readonly string[]>> = {
-  fintech: ["dispatch_wire", "issue_credit_adverse_action"],
+  fintech: ["dispatch_wire", "issue_credit_adverse_action", "commit_corporate_spend", "approve_expenditure", "release_payment"],
   industrial_iot: ["dispatch_manipulation", "mutate_safety_parameter", "adjust_plc_setpoint"],
   devsecops: ["execute_command", "run_sql_statement", "http_request", "run_pipeline_job", "read_file", "monitor_logs", "modify_iam_policy", "process_retrieved_content"],
+  contractual_eligibility: ["approve_eligibility_claim", "confirm_eligibility", "bind_contract_terms"],
+  compliance_provenance: ["submit_regulated_record", "submit_filing", "release_report"],
 };
 
 const COVERAGE_TEXT = Object.entries(COVERAGE)
@@ -148,7 +150,7 @@ export function registerTools(server: McpServer, client: MomClient, deps: ToolDe
     {
       title: "Recall a verified compliant tool call",
       description:
-        `Call this BEFORE you run a tool that policy might block (payments, credit decisions, robot or plant commands, shell, SQL, web requests). It asks Achromat Machine Operational Memory whether a verified compliant version of this call already exists. It works immediately and needs no identity: without one it searches the public, approved lessons; once the user has registered an identity it also finds the user's own pending lessons. Pass the arguments you intend to send: the names of their keys (not the values) are what the semantic match uses. On a match you receive compliant_arguments, a steering_directive and the rule that applied: use the whole compliant_arguments object as your template, keep any [VERIFIED_STATE] placeholders exactly as written, and change only your own operational values (amounts, routing numbers, file paths).\n\nCOVERAGE. Matching is exact on domain and tool_name. Lessons exist for these tool names, by domain: ${COVERAGE_TEXT}. Use industrial_iot for robot and plant commands (the robotics domain has no lessons yet). A tool name that is not listed, such as bash, psql or postgres_query, returns no match because nothing was recorded for it, so use the listed name only when it really is the tool you are about to call. On no match, continue with achromat_calibrate if it is available, or proceed under your own checks.`,
+        `Call this BEFORE you run a tool that policy might block (payments, corporate spend, credit decisions, claim and contract decisions, regulated filings, robot or plant commands, shell, SQL, web requests). It asks Achromat Machine Operational Memory whether a verified compliant version of this call already exists. It works immediately and needs no identity: without one it searches the public, approved lessons; once the user has registered an identity it also finds the user's own pending lessons. Pass the arguments you intend to send: the names of their keys (not the values) are what the semantic match uses. On a match you receive compliant_arguments, a steering_directive and the statutory anchor: use the whole compliant_arguments object as your template, keep any [VERIFIED_STATE] placeholders exactly as written, and change only your own operational values (amounts, routing numbers, file paths).\n\nCOVERAGE. Matching is exact on domain and tool_name. Lessons exist for these tool names, by domain: ${COVERAGE_TEXT}. Use industrial_iot for robot and plant commands. A tool name that is not listed, such as bash, psql or postgres_query, returns no match because nothing was recorded for it, so use the listed name only when it really is the tool you are about to call. On no match, continue with achromat_calibrate if it is available, or proceed under your own checks.`,
       inputSchema: recallInput,
       annotations: { title: "Recall a verified compliant tool call", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },

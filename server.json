@@ -3,7 +3,7 @@
   "name": "ai.achromat/mcp-server",
   "title": "Achromat Machine Operational Memory",
   "description": "Recall and calibrate policy-compliant tool-call arguments before execution. Does not run the tool.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "websiteUrl": "https://achromat.ai",
   "repository": {
     "url": "https://github.com/achromat-ai/achromat-mcp-server",
@@ -20,7 +20,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@achromat-ai/mcp-server",
-      "version": "0.1.5",
+      "version": "0.1.6",
       "transport": {
         "type": "stdio"
       },

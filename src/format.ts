@@ -179,7 +179,6 @@ export function formatRecall(outcome: ApiResult): CallToolResult {
   if (!isRecord(lesson) || !isRecord(lesson.compliant_arguments)) return unreadable("recall");
   const score = typeof body.score === "number" ? ` (score ${body.score.toFixed(3)})` : "";
   const lines = [`MATCH: ${text(body.tier) ?? "unknown"} tier${score}. A verified compliant version of this call exists.`, "", UNTRUSTED, ""];
-  lines.push(`Rule: ${text(lesson.violation_rule) ?? "(none given)"}`);
   const anchor = text(lesson.statutory_anchor);
   if (anchor) lines.push(`Statutory anchor: ${anchor}`);
   lines.push(`Steering directive: ${text(lesson.steering_directive) ?? "(none given)"}`);

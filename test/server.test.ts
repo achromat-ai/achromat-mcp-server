@@ -241,7 +241,21 @@ describe("the achromat_recall description tells the agent what has coverage", ()
       for (const tool of tools) expect(recall.description, `${domain}/${tool}`).toContain(tool);
       expect((DOMAINS as readonly string[]).includes(domain), `${domain} is a domain the tool accepts`).toBe(true);
     }
-    expect(Object.keys(COVERAGE).sort()).toEqual(["devsecops", "fintech", "industrial_iot"]);
+    expect(Object.keys(COVERAGE).sort()).toEqual(["compliance_provenance", "contractual_eligibility", "devsecops", "fintech", "industrial_iot"]);
+  });
+
+  it("offers the five served domains, without robotics, and lists the nine corporate spend, eligibility and provenance tools", async () => {
+    expect([...DOMAINS]).toEqual(["fintech", "industrial_iot", "devsecops", "contractual_eligibility", "compliance_provenance"]);
+    expect((DOMAINS as readonly string[]).includes("robotics")).toBe(false);
+    expect(recallInput.domain.safeParse("robotics").success).toBe(false);
+    expect(recallInput.domain.safeParse("compliance_provenance").success).toBe(true);
+    expect(COVERAGE.fintech).toEqual(expect.arrayContaining(["dispatch_wire", "issue_credit_adverse_action", "commit_corporate_spend", "approve_expenditure", "release_payment"]));
+    expect(COVERAGE.contractual_eligibility).toEqual(["approve_eligibility_claim", "confirm_eligibility", "bind_contract_terms"]);
+    expect(COVERAGE.compliance_provenance).toEqual(["submit_regulated_record", "submit_filing", "release_report"]);
+    const { client } = await connect();
+    const recall = (await client.listTools()).tools.find((tool) => tool.name === "achromat_recall")!;
+    const domain = (recall.inputSchema.properties as Record<string, { enum?: string[] }>).domain!;
+    expect(domain.enum).toEqual([...DOMAINS]);
   });
 
   it("says matching is exact, names examples that have no lessons, and points robot commands at industrial_iot", async () => {
@@ -250,7 +264,9 @@ describe("the achromat_recall description tells the agent what has coverage", ()
     expect(recall.description).toMatch(/exact on domain and tool_name/);
     expect(recall.description).toMatch(/bash, psql or postgres_query/);
     expect(recall.description).toMatch(/Use industrial_iot for robot and plant commands/);
-    expect(recall.description).toMatch(/robotics domain has no lessons yet/);
+    expect(recall.description).not.toMatch(/robotics/i);
+    expect(recall.description).not.toMatch(/the rule that applied/);
+    expect(recall.description).toMatch(/steering_directive and the statutory anchor/);
     const toolName = (recall.inputSchema.properties as Record<string, { description: string }>).tool_name!.description;
     expect(toolName).toMatch(/exact on domain and tool name/);
   });

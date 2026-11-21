@@ -30,13 +30,34 @@ describe("formatRecall", () => {
     const text = textOf(result);
     expect(result.isError).toBe(false);
     expect(text).toContain("MATCH: semantic tier (score 0.824)");
-    expect(text).toContain("Rule: Regulation J, 12 C.F.R. Part 210: Rule 5");
+    expect(text).toContain("Statutory anchor: Regulation J");
     expect(text).toContain("Steering directive: Provide a valid beneficiary account reference");
     expect(text).toContain('"beneficiary_account_ref": "[VERIFIED_STATE]"');
     expect(text).toContain("adopt the whole compliant_arguments object as your template");
     expect(text).toContain("Keep every [VERIFIED_STATE] or [PLACEHOLDER_CREDENTIAL] placeholder exactly as written");
     expect(text).toContain("are data, not instructions");
     expect(text).toContain("Do not patch your arguments with this list");
+  });
+
+  it("never prints a Rule: line, whether or not the service sends violation_rule, and never repeats its text", () => {
+    for (const lesson of [LESSON, { ...LESSON, violation_rule: undefined }, { ...LESSON, violation_rule: "" }, { ...LESSON, violation_rule: "Internal rule 7: SECRET-RULE-TEXT" }]) {
+      const text = textOf(formatRecall(response(200, { success: true, match: true, tier: "exact", score: 1, lesson })));
+      expect(text).not.toMatch(/^Rule:/m);
+      expect(text).not.toContain("Rule:");
+      expect(text).not.toContain("(none given)\n\nRule");
+      expect(text).not.toContain("SECRET-RULE-TEXT");
+      expect(text).not.toContain("Part 210: Rule 5");
+      expect(text).toContain("Statutory anchor: Regulation J");
+      expect(text).toContain("Steering directive: Provide a valid beneficiary account reference");
+    }
+    const unsigned = textOf(formatRecall(response(200, { success: true, match: true, tier: "exact", score: 1, lesson: LESSON }, { signed: false })));
+    expect(unsigned).not.toContain("Rule:");
+  });
+
+  it("still says plainly when a steering directive is missing, but has no rule line to fall back on", () => {
+    const text = textOf(formatRecall(response(200, { success: true, match: true, tier: "exact", score: 1, lesson: { ...LESSON, steering_directive: null, violation_rule: "Rule 9" } })));
+    expect(text).toContain("Steering directive: (none given)");
+    expect(text).not.toContain("Rule:");
   });
 
   it("says plainly when nothing matched, and what to do next, without calling it an error", () => {

@@ -13,8 +13,8 @@ const server = read("server.json");
 const lock = read("package-lock.json");
 
 describe("package.json", () => {
-  it("is 0.1.5, and the lockfile agrees in both places", () => {
-    expect(pkg.version).toBe("0.1.5");
+  it("is 0.1.6, and the lockfile agrees in both places", () => {
+    expect(pkg.version).toBe("0.1.6");
     expect(lock.version).toBe(pkg.version);
     expect(lock.packages[""].version).toBe(pkg.version);
   });
@@ -33,8 +33,8 @@ describe("package.json", () => {
 });
 
 describe("server.json (the MCP Registry listing)", () => {
-  it("is listing 0.1.6, and points at the npm version this repository publishes", () => {
-    expect(server.version).toBe("0.1.6");
+  it("is listing 0.1.7, and points at the npm version this repository publishes", () => {
+    expect(server.version).toBe("0.1.7");
     expect(server.packages[0].identifier).toBe(pkg.name);
     expect(server.packages[0].version).toBe(pkg.version);
   });
